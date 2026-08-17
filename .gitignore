@@ -6,3 +6,6 @@ dist/
 build/
 *.log
 .DS_Store
+
+# Local dev toolkit, not part of the shipped project
+/atdd-pipeline/
