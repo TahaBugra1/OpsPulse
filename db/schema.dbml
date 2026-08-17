@@ -1,0 +1,172 @@
+// OpsPulse (Company Operations Hub) — DBML (dbdiagram.io)
+// FINAL — approved as source of truth after 4 red-team review rounds
+// + Strategic Upgrade Blueprint approval. Mirrors schema.sql exactly
+// — 7 tables. Analytics, real-time, and AI layers all read this
+// schema as-is; none require a schema change. Reopen is explicitly
+// NOT part of the state machine (locked scope). Does NOT include the
+// deferred phase-5 RAG table (request_embeddings) or the optional
+// ai_suggestion_log — both remain pending decisions.
+//
+// role / priority / status / action / notification type are modeled
+// below as enums for readability, but are implemented as VARCHAR +
+// CHECK constraints in the real Postgres DDL — not native PG ENUM —
+// per project decision (CHECK is far easier to alter mid-project).
+
+Enum user_role {
+  EMPLOYEE
+  DEPARTMENT_AUTHORITY
+  ADMIN
+}
+
+Enum request_priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+Enum request_status {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+Enum history_action {
+  CREATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+}
+
+Enum notification_type {
+  REQUEST_ASSIGNED
+  REQUEST_COMPLETED
+  REQUEST_REJECTED
+  COMMENT_ADDED
+}
+
+Table departments {
+  id         uuid         [pk, default: `gen_random_uuid()`]
+  name       varchar(100) [not null, unique]
+  is_active  boolean      [not null, default: true, note: 'controls availability for NEW requests only; RESTRICT protects history regardless']
+  created_at timestamptz  [not null, default: `now()`]
+}
+
+Table users {
+  id            uuid         [pk, default: `gen_random_uuid()`]
+  name          varchar(150) [not null]
+  surname       varchar(150) [note: 'nullable — Google accounts may omit family_name']
+  email         citext       [not null, unique, note: 'case-insensitive']
+  password_hash varchar(255) [note: 'nullable for Google-only users']
+  google_id     varchar(255) [unique, note: 'nullable — Google "sub" claim']
+  role          user_role    [not null, default: 'EMPLOYEE']
+  department_id uuid         [note: 'nullable; NOT NULL enforced for DEPARTMENT_AUTHORITY via CHECK']
+  is_active     boolean      [not null, default: true, note: 'gates login']
+  created_at    timestamptz  [not null, default: `now()`]
+  updated_at    timestamptz  [not null, default: `now()`, note: 'auto-updated via trigger']
+
+  Note: '''
+    CHECK: role != 'DEPARTMENT_AUTHORITY' OR department_id IS NOT NULL
+    CHECK: password_hash IS NOT NULL OR google_id IS NOT NULL
+  '''
+}
+
+Table request_types {
+  id            uuid         [pk, default: `gen_random_uuid()`]
+  name          varchar(150) [not null, unique]
+  department_id uuid         [not null]
+  is_active     boolean      [not null, default: true]
+  created_at    timestamptz  [not null, default: `now()`]
+}
+
+Table requests {
+  id              uuid             [pk, default: `gen_random_uuid()`]
+  request_number  integer          [not null, unique, increment, note: 'SERIAL — display-only, e.g. #1024. Never used in URLs/auth.']
+  title           varchar(200)     [not null]
+  description     text             [not null]
+  request_type_id uuid             [not null]
+  department_id   uuid             [not null, note: 'server-derived snapshot — never accepted from client']
+  created_by      uuid             [not null]
+  assigned_to     uuid             [note: 'nullable']
+  priority        request_priority [not null, default: 'MEDIUM']
+  status          request_status   [not null, default: 'OPEN']
+  sla_due_at      timestamptz      [not null, note: 'created_at + priority-based duration; recomputed on priority change; powers frontend overdue highlighting only, no cron job reads it yet']
+  created_at      timestamptz      [not null, default: `now()`]
+  updated_at      timestamptz      [not null, default: `now()`, note: 'auto-updated via trigger']
+
+  Indexes {
+    (department_id, status) [name: 'idx_requests_department_status']
+    created_by              [name: 'idx_requests_created_by']
+    assigned_to             [name: 'idx_requests_assigned_to']
+    sla_due_at              [name: 'idx_requests_sla_overdue', note: 'partial WHERE status NOT IN (COMPLETED, REJECTED) in real DDL']
+  }
+
+  Note: '''
+    CHECK: (status = 'OPEN' AND assigned_to IS NULL)
+        OR (status IN ('ASSIGNED','IN_PROGRESS','COMPLETED') AND assigned_to IS NOT NULL)
+        OR (status = 'REJECTED')
+  '''
+}
+
+Table request_comments {
+  id         uuid        [pk, default: `gen_random_uuid()`]
+  request_id uuid        [not null]
+  author_id  uuid        [not null]
+  content    text        [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    request_id [name: 'idx_request_comments_request_id']
+  }
+}
+
+Table request_history {
+  id         uuid           [pk, default: `gen_random_uuid()`]
+  request_id uuid           [not null]
+  actor_id   uuid           [not null]
+  action     history_action [not null]
+  old_value  varchar(30)
+  new_value  varchar(30)
+  note       text           [note: 'required when new_value = REJECTED (CHECK + service layer)']
+  created_at timestamptz    [not null, default: `now()`]
+
+  Indexes {
+    request_id [name: 'idx_request_history_request_id']
+  }
+
+  Note: "CHECK: new_value IS DISTINCT FROM 'REJECTED' OR note IS NOT NULL"
+}
+
+Table notifications {
+  id         uuid              [pk, default: `gen_random_uuid()`]
+  user_id    uuid              [not null]
+  request_id uuid              [note: 'nullable']
+  type       notification_type [not null, note: 'drives frontend icon/color choice — not parsed from message text']
+  message    text              [not null]
+  read_at    timestamptz       [note: 'nullable — NULL means unread']
+  created_at timestamptz       [not null, default: `now()`]
+
+  Indexes {
+    user_id                [name: 'idx_notifications_user_unread', note: 'partial WHERE read_at IS NULL — powers the unread badge count']
+    (user_id, created_at)  [name: 'idx_notifications_user_created', note: 'powers the full "View all notifications" list']
+  }
+}
+
+// ------------------------------------------------------------
+// Relationships — delete policy mirrors 4 rounds of review exactly.
+// RESTRICT everywhere audit/history/reference integrity matters;
+// CASCADE only for notifications, which are UI convenience, not an
+// audit record.
+// ------------------------------------------------------------
+Ref: users.department_id > departments.id [delete: restrict]
+Ref: request_types.department_id > departments.id [delete: restrict]
+Ref: requests.request_type_id > request_types.id [delete: restrict]
+Ref: requests.department_id > departments.id [delete: restrict]
+Ref: requests.created_by > users.id [delete: restrict]
+Ref: requests.assigned_to > users.id [delete: restrict]
+Ref: request_comments.request_id > requests.id [delete: restrict]
+Ref: request_comments.author_id > users.id [delete: restrict]
+Ref: request_history.request_id > requests.id [delete: restrict]
+Ref: request_history.actor_id > users.id [delete: restrict]
+Ref: notifications.user_id > users.id [delete: cascade]
+Ref: notifications.request_id > requests.id [delete: cascade]
