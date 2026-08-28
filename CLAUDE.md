@@ -30,9 +30,7 @@ see the decision table in `docs/atdd_pipeline_usage_guide.md`. Do run it in
 full for anything touching auth, authorization, the request state machine,
 or real-time security.
 
-Stack (once scaffolded): React, Node.js, Express, PostgreSQL, JWT, Google
-OAuth, bcrypt. No `package.json` exists yet — populate the actual
-build/lint/test commands here once it does.
+Stack: React, Node.js, Express, PostgreSQL, JWT, Google OAuth, bcrypt.
 
 ---
 
@@ -89,7 +87,7 @@ Registration NEVER allows selecting a role. All self-registration (email/passwor
 
 ## DATABASE
 
-Source of truth: `db/schema.sql` (7 tables: `departments`, `users`, `request_types`, `requests`, `request_comments`, `request_history`, `notifications`). Visual reference: `db/schema.dbml` (paste into dbdiagram.io). **Neither has ever been executed against a real running Postgres instance yet** — only syntax-validated. The very first implementation task is proving it runs cleanly against a real database (Docker Compose recommended) before writing any application code against it.
+Source of truth: `db/schema.sql` (7 tables: `departments`, `users`, `request_types`, `requests`, `request_comments`, `request_history`, `notifications`). Visual reference: `db/schema.dbml` (paste into dbdiagram.io). **Verified working** against a local PostgreSQL instance (tables confirmed visible in pgAdmin) — this is no longer a syntax-only check.
 
 Non-obvious design decisions you must preserve, not "clean up":
 
@@ -103,6 +101,7 @@ Non-obvious design decisions you must preserve, not "clean up":
 - **Resolution-time calculations must NEVER use `requests.updated_at`** (it reflects the *last* modification of any kind, not necessarily completion). Compute from `request_history`: the most recent row where `action = 'STATUS_CHANGED' AND new_value = 'COMPLETED'` for that request, using that row's `created_at`.
 - Two `CHECK` constraints exist as **defense-in-depth backstops**, not the primary enforcement — the primary enforcement is always in the service layer so the user gets a clean 4xx error, not a raw constraint violation: `requests` (status/assigned_to consistency: OPEN⇒unassigned, ASSIGNED/IN_PROGRESS/COMPLETED⇒assigned, REJECTED⇒either) and `request_history` (`note` required when `new_value = 'REJECTED'`).
 - `users.password_hash` and `users.google_id` are both nullable (a user can be local-only, Google-only, or both), guarded by `CHECK (password_hash IS NOT NULL OR google_id IS NOT NULL)` — an account with neither is an account nobody can ever log into.
+- **`users.surname` is nullable, not required** — kept because Google OAuth supplies `given_name`/`family_name` as separate fields natively, but some Google accounts omit `family_name`; making it `NOT NULL` would lock those users out of registration entirely.
 
 ---
 
@@ -153,7 +152,7 @@ Also validate in the service layer (not the database): `assigned user.role = DEP
 Route → Controller (thin) → Service (business rules + queries) → PostgreSQL
 ```
 
-No separate Repository layer — Service owns both business logic and the queries it needs (e.g. `requestService.js` does both). This is a deliberate simplification for a solo project, not an oversight.
+No separate Repository layer — Service owns both business logic and the queries it needs (e.g. `requestService.js` does both). This is a deliberate simplification for a solo project: no plan to change database technology, no team boundary to protect with an abstraction, and the real discipline we want (atomic updates, every write logged) comes from centralizing writes into one service function per concern, not from a Repository layer.
 
 Every write to `requests` goes through the same small set of centralized service functions (e.g. `createRequest`, `changeRequestStatus`, `claimRequest`, `changePriority`) — these are the *only* places that mutate `requests`, log to `request_history`, and create notifications. New code paths (a new endpoint, an AI feature, a real-time trigger) must call into these functions, never write around them. This is what makes the audit trail, the SLA recompute-on-priority-change, and the "every write is logged" guarantee actually hold.
 
@@ -166,6 +165,7 @@ Every write to `requests` goes through the same small set of centralized service
 - Operation-specific endpoints, not a generic bypassable PATCH: `POST /api/requests/:id/assign`, `PATCH /api/requests/:id/status`, `PATCH /api/requests/:id/priority`. No endpoint should let a client set `status` or `assigned_to` outside these dedicated, workflow-aware paths.
 - No request DELETE endpoint exists or should exist.
 - URLs and API operations use `id` (UUID). `request_number` is returned in response payloads for display only.
+- `GET /health` is unauthenticated by design (no auth middleware) — it's an operational liveness check, not a protected resource. Do not fold it under `/api`.
 - New surfaces from the upgrade layers (add only when actually building that layer):
 
 ```
@@ -210,18 +210,29 @@ RAG / pgvector / embeddings
 Native PostgreSQL ENUM types (use VARCHAR + CHECK)
 A separate Repository layer
 Refresh-token infrastructure
+Docker for local development (a local PostgreSQL install is already used;
+Docker Compose may be added later, near delivery, purely for packaging —
+see docs/atdd_pipeline_usage_guide.md)
 ```
 
 ---
 
-## CURRENT PROJECT STATE (as of handoff to this session)
+## CURRENT PROJECT STATE
 
-**Zero application code exists.** No `package.json`, no backend/frontend folders, no `.git`. What exists is entirely design output: `db/schema.sql` (never executed against real Postgres), `db/schema.dbml`, and this document. Do not assume any backend/frontend scaffolding, dependencies, or configuration already exist — check before building on top of anything.
+**Database — verified.** `db/schema.sql` executed against a local PostgreSQL instance (no Docker — a local install was already available). Tables confirmed visible in pgAdmin.
 
-## FIRST TASK
+**Backend skeleton — verified.** `package.json`, `.env`/`.env.example`, `routes/`/`controllers/`/`services/`/`middleware/` per Backend Architecture above. `GET /health` implemented and confirmed working: checks a real DB connection via a service function (not just pool existence), returns `200 {status:"ok", db:"connected"}` or `503` on failure, no auth middleware attached.
 
-1. Scaffold the repo (`backend/`, `frontend/`, git init).
-2. Docker Compose a Postgres instance and run `db/schema.sql` against it for the first time — confirm it completes without error before anything else.
-3. Only then start the Express skeleton.
+**In progress — email/password authentication**, running through the full `atdd-pipeline` (first task to do so). Status:
+- `artifacts/email-password-auth/atdd.md` written: 9 Acceptance Criteria (3 Critical, 4 High, 2 Medium), 85% coverage target, <300ms performance target, test strategy 70% unit / 20% integration / 10% E2E (E2E marked N/A for now — no frontend yet, will be filled in with Playwright once it exists).
+- Completion criterion for this task is **stricter than default**: automated tests + `/verify` passing is NOT sufficient by itself — manual curl/Postman verification is also required before this task is considered done. This was a deliberate choice for this specific task (first pipeline run, auth is the highest-consequence category of bug), not a new standing rule for every future task.
+- Currently paused at: reviewing `atdd.md`'s 9 ACs before proceeding to `/plan`.
 
-Do not skip step 2. The schema has been reviewed four times but never actually executed.
+**Not started:** Google OAuth (separate, isolated `/atdd` task, comes after email/password auth is fully verified and committed), the centralized request service (`createRequest`/`claimRequest`/`changeRequestStatus`/`changePriority` — comes right after auth, since these functions need an authenticated user's ID), everything in "Upgrade Layers" above.
+
+## NEXT STEPS
+
+1. Finish reviewing `artifacts/email-password-auth/atdd.md`, confirming it covers: role always forced to EMPLOYEE regardless of request body, `rememberMe` → JWT lifetime (1h/7d), `is_active` re-checked from DB on every request (not trusted from JWT), login rate-limiting actually applied, `password_hash` never present in any response, case-insensitive email handling not fighting `citext`.
+2. `/plan` → `/code-copilot` → `/test-copilot` → `/verify` → manual verification (per this task's stricter completion criterion) → `/red-team` → `/commit`.
+3. Then: Google OAuth (isolated `/atdd` task).
+4. Then: the centralized request service.

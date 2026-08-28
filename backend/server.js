@@ -6,6 +6,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
 const healthRoutes = require('./routes/health.routes');
+const authRoutes = require('./routes/auth.routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -23,10 +24,15 @@ const apiLimiter = rateLimit({
 app.use(apiLimiter);
 
 app.use('/health', healthRoutes);
+app.use('/api/auth', authRoutes);
 
 app.use(errorHandler);
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => {
-  console.log(`OpsPulse backend listening on port ${port}`);
-});
+if (require.main === module) {
+  const port = process.env.PORT || 4000;
+  app.listen(port, () => {
+    console.log(`OpsPulse backend listening on port ${port}`);
+  });
+}
+
+module.exports = app;
