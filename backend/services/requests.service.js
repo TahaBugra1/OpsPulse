@@ -273,4 +273,91 @@ async function changePriority(requestId, { priority }, user) {
   });
 }
 
-module.exports = { createRequest, claimRequest, changeRequestStatus, changePriority };
+const REQUEST_LIST_SELECT = `
+  SELECT
+    r.*,
+    (r.sla_due_at < now() AND r.status NOT IN ('COMPLETED', 'REJECTED')) AS is_overdue,
+    rt.name AS request_type_name,
+    d.name AS department_name,
+    TRIM(CONCAT(creator.name, ' ', COALESCE(creator.surname, ''))) AS created_by_name,
+    CASE WHEN r.assigned_to IS NULL THEN NULL
+      ELSE TRIM(CONCAT(assignee.name, ' ', COALESCE(assignee.surname, '')))
+    END AS assigned_to_name
+  FROM requests r
+  JOIN request_types rt ON rt.id = r.request_type_id
+  JOIN departments d ON d.id = r.department_id
+  JOIN users creator ON creator.id = r.created_by
+  LEFT JOIN users assignee ON assignee.id = r.assigned_to
+`;
+
+const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
+
+async function listRequests(query, user) {
+  const status = query && query.status;
+  if (status !== undefined && status !== null && status !== '' && !VALID_STATUSES.includes(status)) {
+    fail(400, 'Geçersiz status değeri');
+  }
+
+  const conditions = [];
+  const params = [];
+
+  if (user.role === 'EMPLOYEE') {
+    params.push(user.id);
+    conditions.push(`r.created_by = $${params.length}`);
+  } else if (user.role === 'DEPARTMENT_AUTHORITY') {
+    params.push(user.department_id);
+    conditions.push(`r.department_id = $${params.length}`);
+  }
+
+  if (status) {
+    params.push(status);
+    conditions.push(`r.status = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  let result;
+  try {
+    result = await pool.query(
+      `${REQUEST_LIST_SELECT} ${whereClause} ORDER BY r.created_at DESC`,
+      params
+    );
+  } catch (dbErr) {
+    fail(500, 'Talepler getirilemedi, lütfen tekrar deneyin');
+  }
+
+  return result.rows;
+}
+
+async function getRequestById(id, user) {
+  let result;
+  try {
+    result = await pool.query(`${REQUEST_LIST_SELECT} WHERE r.id = $1`, [id]);
+  } catch (dbErr) {
+    fail(500, 'Talep getirilemedi, lütfen tekrar deneyin');
+  }
+  const request = result.rows[0];
+  if (!request) {
+    fail(404, 'Talep bulunamadı');
+  }
+
+  const isOwner = request.created_by === user.id;
+  const isDepartmentAuthority =
+    user.role === 'DEPARTMENT_AUTHORITY' && user.department_id === request.department_id;
+  const isAdmin = user.role === 'ADMIN';
+
+  if (!isOwner && !isDepartmentAuthority && !isAdmin) {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+
+  return request;
+}
+
+module.exports = {
+  createRequest,
+  claimRequest,
+  changeRequestStatus,
+  changePriority,
+  listRequests,
+  getRequestById,
+};

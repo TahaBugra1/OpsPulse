@@ -3,6 +3,8 @@ const {
   claimRequest,
   changeRequestStatus,
   changePriority,
+  listRequests,
+  getRequestById,
 } = require('../services/requests.service');
 
 async function postCreateRequest(req, res) {
@@ -44,4 +46,29 @@ async function patchRequestPriority(req, res) {
   }
 }
 
-module.exports = { postCreateRequest, postClaimRequest, patchRequestStatus, patchRequestPriority };
+async function getRequests(req, res) {
+  try {
+    const result = await listRequests({ status: req.query.status }, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Talepler getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
+async function getRequestByIdHandler(req, res) {
+  try {
+    const result = await getRequestById(req.params.id, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Talep getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
+module.exports = {
+  postCreateRequest,
+  postClaimRequest,
+  patchRequestStatus,
+  patchRequestPriority,
+  getRequests,
+  getRequestByIdHandler,
+};
