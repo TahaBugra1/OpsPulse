@@ -1,4 +1,5 @@
 const pool = require('./db');
+const { emitToRequestRoom } = require('../sockets/emitter');
 
 const SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
 
@@ -104,7 +105,7 @@ async function claimRequest(requestId, user) {
     fail(403, 'Bu departmana ait değil');
   }
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     const updateResult = await client.query(
       `UPDATE requests SET status = 'ASSIGNED', assigned_to = $1
        WHERE id = $2 AND status = 'OPEN'
@@ -132,6 +133,14 @@ async function claimRequest(requestId, user) {
 
     return updated;
   });
+
+  try {
+    const enriched = await fetchEnrichedRequest(result.id);
+    emitToRequestRoom(result.id, 'request:updated', enriched);
+  } catch (emitErr) {
+    console.error('request:updated emisyonu basarisiz oldu:', emitErr);
+  }
+  return result;
 }
 
 const VALID_TRANSITIONS = {
@@ -178,7 +187,7 @@ async function changeRequestStatus(requestId, { status, note }, user) {
     }
   }
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     let updateResult;
     if (request.status === 'OPEN' && status === 'REJECTED') {
       updateResult = await client.query(
@@ -219,6 +228,14 @@ async function changeRequestStatus(requestId, { status, note }, user) {
 
     return updated;
   });
+
+  try {
+    const enriched = await fetchEnrichedRequest(result.id);
+    emitToRequestRoom(result.id, 'request:updated', enriched);
+  } catch (emitErr) {
+    console.error('request:updated emisyonu basarisiz oldu:', emitErr);
+  }
+  return result;
 }
 
 async function changePriority(requestId, { priority }, user) {
@@ -249,7 +266,7 @@ async function changePriority(requestId, { priority }, user) {
 
   const newSlaDueAt = computeSlaDueAt(request.created_at, priority);
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     const updateResult = await client.query(
       `UPDATE requests SET priority = $1, sla_due_at = $2
        WHERE id = $3 AND status IN ('ASSIGNED', 'IN_PROGRESS') AND assigned_to = $4
@@ -271,6 +288,14 @@ async function changePriority(requestId, { priority }, user) {
 
     return updated;
   });
+
+  try {
+    const enriched = await fetchEnrichedRequest(result.id);
+    emitToRequestRoom(result.id, 'request:updated', enriched);
+  } catch (emitErr) {
+    console.error('request:updated emisyonu basarisiz oldu:', emitErr);
+  }
+  return result;
 }
 
 const REQUEST_LIST_SELECT = `
@@ -288,6 +313,14 @@ const REQUEST_LIST_SELECT = `
   JOIN departments d ON d.id = r.department_id
   JOIN users creator ON creator.id = r.created_by
   LEFT JOIN users assignee ON assignee.id = r.assigned_to
+`;
+
+const COMMENT_SELECT = `
+  SELECT
+    c.*,
+    TRIM(CONCAT(author.name, ' ', COALESCE(author.surname, ''))) AS author_name
+  FROM request_comments c
+  JOIN users author ON author.id = c.author_id
 `;
 
 const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
@@ -329,7 +362,7 @@ async function listRequests(query, user) {
   return result.rows;
 }
 
-async function getRequestById(id, user) {
+async function fetchEnrichedRequest(id) {
   let result;
   try {
     result = await pool.query(`${REQUEST_LIST_SELECT} WHERE r.id = $1`, [id]);
@@ -340,6 +373,11 @@ async function getRequestById(id, user) {
   if (!request) {
     fail(404, 'Talep bulunamadı');
   }
+  return request;
+}
+
+async function getRequestById(id, user) {
+  const request = await fetchEnrichedRequest(id);
 
   const isOwner = request.created_by === user.id;
   const isDepartmentAuthority =
@@ -368,14 +406,14 @@ async function addComment(requestId, content, user) {
 
   await getRequestById(requestId, user);
 
-  return withTransaction(async (client) => {
+  const comment = await withTransaction(async (client) => {
     const insertResult = await client.query(
       `INSERT INTO request_comments (request_id, author_id, content)
        VALUES ($1, $2, $3)
        RETURNING *`,
       [requestId, user.id, trimmedContent]
     );
-    const comment = insertResult.rows[0];
+    const insertedComment = insertResult.rows[0];
 
     const freshRequest = await client.query(
       'SELECT created_by, assigned_to, request_number FROM requests WHERE id = $1',
@@ -392,8 +430,17 @@ async function addComment(requestId, content, user) {
       );
     }
 
-    return comment;
+    return insertedComment;
   });
+
+  try {
+    const enrichedCommentResult = await pool.query(`${COMMENT_SELECT} WHERE c.id = $1`, [comment.id]);
+    emitToRequestRoom(requestId, 'request:commented', enrichedCommentResult.rows[0]);
+  } catch (emitErr) {
+    console.error('request:commented emisyonu basarisiz oldu:', emitErr);
+  }
+
+  return comment;
 }
 
 async function listComments(requestId, user) {
@@ -402,13 +449,7 @@ async function listComments(requestId, user) {
   let result;
   try {
     result = await pool.query(
-      `SELECT
-         c.*,
-         TRIM(CONCAT(author.name, ' ', COALESCE(author.surname, ''))) AS author_name
-       FROM request_comments c
-       JOIN users author ON author.id = c.author_id
-       WHERE c.request_id = $1
-       ORDER BY c.created_at ASC`,
+      `${COMMENT_SELECT} WHERE c.request_id = $1 ORDER BY c.created_at ASC`,
       [requestId]
     );
   } catch (dbErr) {
