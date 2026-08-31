@@ -5,6 +5,8 @@ const {
   changePriority,
   listRequests,
   getRequestById,
+  addComment,
+  listComments,
 } = require('../services/requests.service');
 
 async function postCreateRequest(req, res) {
@@ -64,6 +66,24 @@ async function getRequestByIdHandler(req, res) {
   }
 }
 
+async function postAddComment(req, res) {
+  try {
+    const result = await addComment(req.params.id, req.body.content, req.user);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Yorum eklenemedi, lütfen tekrar deneyin' });
+  }
+}
+
+async function getComments(req, res) {
+  try {
+    const result = await listComments(req.params.id, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Yorumlar getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
 module.exports = {
   postCreateRequest,
   postClaimRequest,
@@ -71,4 +91,6 @@ module.exports = {
   patchRequestPriority,
   getRequests,
   getRequestByIdHandler,
+  postAddComment,
+  getComments,
 };

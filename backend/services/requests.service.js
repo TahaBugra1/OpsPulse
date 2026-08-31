@@ -353,6 +353,71 @@ async function getRequestById(id, user) {
   return request;
 }
 
+async function addComment(requestId, content, user) {
+  if (user.role === 'ADMIN') {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+
+  const trimmedContent = typeof content === 'string' ? content.trim() : '';
+  if (!trimmedContent) {
+    fail(400, 'Yorum içeriği boş olamaz');
+  }
+  if (trimmedContent.length > 2000) {
+    fail(400, 'Yorum en fazla 2000 karakter olabilir');
+  }
+
+  await getRequestById(requestId, user);
+
+  return withTransaction(async (client) => {
+    const insertResult = await client.query(
+      `INSERT INTO request_comments (request_id, author_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [requestId, user.id, trimmedContent]
+    );
+    const comment = insertResult.rows[0];
+
+    const freshRequest = await client.query(
+      'SELECT created_by, assigned_to, request_number FROM requests WHERE id = $1',
+      [requestId]
+    );
+    const { created_by, assigned_to, request_number } = freshRequest.rows[0];
+    const recipient = user.id === created_by ? assigned_to : created_by;
+
+    if (recipient && recipient !== user.id) {
+      await client.query(
+        `INSERT INTO notifications (user_id, request_id, type, message)
+         VALUES ($1, $2, 'COMMENT_ADDED', $3)`,
+        [recipient, requestId, `#${request_number} numaralı talebe yeni bir yorum eklendi.`]
+      );
+    }
+
+    return comment;
+  });
+}
+
+async function listComments(requestId, user) {
+  await getRequestById(requestId, user);
+
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT
+         c.*,
+         TRIM(CONCAT(author.name, ' ', COALESCE(author.surname, ''))) AS author_name
+       FROM request_comments c
+       JOIN users author ON author.id = c.author_id
+       WHERE c.request_id = $1
+       ORDER BY c.created_at ASC`,
+      [requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorumlar getirilemedi, lütfen tekrar deneyin');
+  }
+
+  return result.rows;
+}
+
 module.exports = {
   createRequest,
   claimRequest,
@@ -360,4 +425,6 @@ module.exports = {
   changePriority,
   listRequests,
   getRequestById,
+  addComment,
+  listComments,
 };
