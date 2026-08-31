@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const healthRoutes = require('./routes/health.routes');
 const authRoutes = require('./routes/auth.routes');
 const requestsRoutes = require('./routes/requests.routes');
+const analyticsRoutes = require('./routes/analytics.routes');
 const authMiddleware = require('./middleware/auth.middleware');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -28,6 +29,7 @@ app.use(apiLimiter);
 app.use('/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/requests', authMiddleware, requestsRoutes);
+app.use('/api/analytics', authMiddleware, analyticsRoutes);
 
 app.use(errorHandler);
 
