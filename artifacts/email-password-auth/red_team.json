@@ -1,0 +1,76 @@
+{
+  "task": "email-password-auth",
+  "reviewed_at": "2026-08-27",
+  "summary": "İlk incelemede bulunan 2 medium (DB hata guard'ı eksikliği) ve 1 low (tekrarlanan hata-fırlatma deseni) bulgu, aynı subagent'a geri gönderilerek düzeltildi ve bağımsız olarak yeniden doğrulandı (12/12 test PASS, canlı smoke test PASS, hiçbir davranış regresyonu yok). Kalan tek not (login rate limiter'ın server.js yerine auth.routes.js'e konması) bir defect değil, plan.md'den bilinçli/haklı bir sapma — aksiyon gerektirmiyor. Kritik veya bloklayıcı bulgu yok.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "correctness",
+      "file": "backend/services/auth.service.js",
+      "issue": "register()'daki uniqueness SELECT ve login()'in kimlik-doğrulama SELECT'i DB hatalarına karşı korunmuyordu, ham hata mesajı client'a sızabilirdi.",
+      "better_approach": "Her iki sorgu da kendi try/catch'i içine alınıp DB hatasında generic 500 mesajına çevrildi (INSERT'te zaten kullanılan desenle tutarlı hale getirildi).",
+      "reason": "AC9'un 'DB hatasında generic mesaj' ilkesi artık dosya genelinde tutarlı uygulanıyor.",
+      "outcome": "fixed"
+    },
+    {
+      "severity": "medium",
+      "category": "reliability",
+      "file": "backend/middleware/auth.middleware.js",
+      "issue": "Middleware'deki DB sorgusu guard'sızdı; Express 4'te bu, DB hatasında isteğin response almadan asılı kalmasına yol açabilirdi.",
+      "better_approach": "Sorgu try/catch ile sarıldı, hata durumunda 500 dönüp next() çağrılmıyor.",
+      "reason": "Middleware, gelecekte mount edilecek route'lar için güvenli hale geldi.",
+      "outcome": "fixed"
+    },
+    {
+      "severity": "low",
+      "category": "architecture",
+      "file": "backend/routes/auth.routes.js",
+      "issue": "plan.md login rate limiter'ın server.js'e eklenmesini öngörmüştü, gerçek implementasyon auth.routes.js'e koydu.",
+      "better_approach": "Yok — bu plan.md'nin önerdiğinden daha tutarlı bir yerleşim.",
+      "reason": "Defect değil, sadece plan.md ile gerçekleşen arasındaki farkın kaydı.",
+      "outcome": "no_change_needed"
+    },
+    {
+      "severity": "low",
+      "category": "caveman",
+      "file": "backend/services/auth.service.js",
+      "issue": "`new Error(...); err.status=N; throw err;` deseni 7 kez tekrarlanıyordu.",
+      "better_approach": "`fail(status, message)` helper'ı eklendi, 7 kullanım da buna geçirildi.",
+      "reason": "~21 satır ~7 satıra indi, dosya genelinde tutarlı hata fırlatma.",
+      "outcome": "fixed"
+    }
+  ],
+  "strengths": [
+    "9 Acceptance Criteria'nın 8'i hem kod hem test seviyesinde sağlam şekilde doğrulanmış (12/12 test PASS, bu incelemede bağımsız olarak tekrar çalıştırıldı); AC9 bilinçli ve şeffaf bir şekilde test kapsamı dışında bırakılmış.",
+    "Performans hedefi (<300ms) çok rahat karşılanıyor — ısınmış ölçümde register/login ~100-105ms (canlı ölçüldü).",
+    "SQL injection riski yok — tüm sorgular parametreli, string concatenation hiçbir yerde kullanılmamış.",
+    "Düzeltmeler sonrası hiçbir davranış regresyonu yok: 12/12 test hâlâ PASS, canlı smoke test (register/login/duplicate-409) hâlâ doğru çalışıyor.",
+    "Fix'ler dar kapsamlı yapıldı — sadece DB sorgu çağrıları try/catch'e alındı, business-logic kontrolleri (409/401/403) dokunulmadan bırakıldı, spekülatif bir genişleme yok."
+  ],
+  "risks": [
+    "Login rate-limiter in-memory store kullanıyor — tek instance'lı mevcut MVP için sorun değil, yatay ölçeklenirse tutarsız çalışır (atdd.md'de zaten bilinen, kabul edilmiş risk).",
+    "AC9 (DB outage sırasında register'ın 500 dönmesi) için otomatik bir test hâlâ yok — kabul edilmiş, şeffaf bir boşluk, davranışın kendisi artık login ve middleware için de tutarlı şekilde uygulanıyor.",
+    "ALLOWED_EMAIL_DOMAIN kontrolü sadece domain string eşleşmesi yapıyor, gerçek bir email doğrulaması değil (CLAUDE.md'nin zaten işaretlediği, kabul edilmiş bir risk)."
+  ],
+  "caveman_review": {
+    "complexity": "low",
+    "unnecessary_files": 0,
+    "unnecessary_helpers": 0,
+    "unnecessary_abstractions": 0
+  },
+  "scope_review": {
+    "matches_atdd": true,
+    "scope_expansion": false
+  },
+  "ready_to_commit": {
+    "atdd_satisfied": true,
+    "tests_passed": true,
+    "no_critical_findings": true,
+    "scope_respected": true,
+    "caveman_satisfied": true,
+    "security_acceptable": true,
+    "maintainability_acceptable": true,
+    "no_blocking_risks": true
+  },
+  "verdict": "approve"
+}

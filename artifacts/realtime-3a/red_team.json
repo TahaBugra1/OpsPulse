@@ -1,0 +1,62 @@
+{
+  "task": "realtime-3a",
+  "reviewed_at": "2026-08-31T00:00:00Z",
+  "summary": "Uygulama atdd.md'nin 10 AC'sini karşılıyor, mimari plan.md'ye sadık kalıyor (circular-require önleme, emit-after-commit, handshake auth reuse) ve 66/66 test PASS ile doğrulandı. İki orta/düşük önemde bulgu var: (1) transaction commit sonrası enrichment re-fetch'in hata durumunda REST yanıtını yanlışlıkla başarısız gösterebilmesi (atdd.md'nin Rollback Beklentisi'ne kısmen aykırı), (2) addComment'teki yorum-zenginleştirme SQL'inin listComments ile tekrar etmesi. Hiçbiri commit'i engelleyecek ağırlıkta değil.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "reliability",
+      "file": "backend/services/requests.service.js",
+      "issue": "claimRequest (137-139), changeRequestStatus (228-230), changePriority (284-286) ve addComment (416-425) hepsinde, transaction BAŞARIYLA commit olduktan SONRA çalışan 'enrichment' sorgusu (fetchEnrichedRequest / addComment'in kendi SELECT'i) try/catch ile korunmuyor. Bu sorgu (geçici bir DB hatası, connection pool tükenmesi vb. nedenle) hata fırlatırsa, exception fonksiyonun dışına (controller'a) sızar ve client 500 alır — halbuki yazma işlemi (claim/status/priority/comment) DB'de zaten BAŞARIYLA gerçekleşmiştir. Kullanıcı 'başarısız oldu' sanıp tekrar dener, bu da 409 Conflict'e (ör. 'Bu talep zaten üstlenilmiş') çarpar — kafa karıştırıcı bir UX. Bu, atdd.md'nin Rollback Beklentisi bölümündeki 'Event emisyonu asla REST işleminin başarı/başarısızlığını belirlememeli' ilkesine kısmen aykırı — ilke sadece emisyonun kendisini değil, emisyondan önceki enrichment fetch'i de kapsamalıydı, çünkü ikisi de commit-sonrası aynı riski taşıyor.",
+      "better_approach": "fetchEnrichedRequest/enrichment sorgusu + emitToRequestRoom çağrısını ortak bir try/catch içine al (hata durumunda sadece logla, REST fonksiyonunun kendi `return result;` değerini etkileme). Örn: `try { const enriched = await fetchEnrichedRequest(result.id); emitToRequestRoom(result.id, 'request:updated', enriched); } catch (emitErr) { console.error('event emisyonu başarısız', emitErr); }` — 4 fonksiyonun hepsinde aynı desen.",
+      "reason": "atdd.md'nin kendi Rollback Beklentisi metni: 'event emisyonunun kendisi başarısız olursa... REST yanıtını etkilememeli, sadece o event kaybolur'. Şu anki kod bunu sadece emitToRequestRoom'un kendisi için (emitter.js'in no-op guard'ı ile) dolaylı olarak sağlıyor, ama emisyondan hemen önceki DB re-fetch'i için sağlamıyor — aynı prensip orada da geçerli olmalı.",
+      "outcome": "fixed"
+    },
+    {
+      "severity": "low",
+      "category": "maintainability",
+      "file": "backend/services/requests.service.js",
+      "issue": "addComment (416-424) içindeki yorum-zenginleştirme SELECT'i (`c.*, author_name` JOIN'i, `WHERE c.id = $1`), listComments (436-444) içindeki neredeyse birebir aynı SELECT'in (`WHERE c.request_id = $1`) bir kopyası — sadece WHERE farklı. Bu, tam da `fetchEnrichedRequest` için yapılan refactor'ün (SQL tekrarını önleme) burada uygulanmamış hali.",
+      "better_approach": "Aynı `fetchEnrichedRequest` deseniyle küçük bir private helper (`fetchEnrichedComment(id)`) çıkarılıp hem addComment hem (isteğe bağlı) listComments'in satır-bazlı ihtiyacı için kullanılabilir — ya da en azından ortak SELECT gövdesi bir sabit (`COMMENT_SELECT`) olarak REQUEST_LIST_SELECT deseniyle paylaşılabilir.",
+      "reason": "plan.md'nin kendisi bu tekrarı fetchEnrichedRequest için bilinçli olarak önlemişti ('gerçek SQL tekrarını önlüyor'); addComment'in enrichment sorgusu aynı mantıkla ele alınmamış — proje genelinde tutarlı bir desen değil.",
+      "outcome": "fixed"
+    }
+  ],
+  "strengths": [
+    "Emisyon her 4 yazma fonksiyonunda da withTransaction(...) TAMAMLANDIKTAN SONRA yapılıyor, transaction callback'i içinde değil — atdd.md'nin Rollback Beklentisi'nin ana gereksinimi (asenkron emisyonun REST'in kendi başarısını belirlememesi) doğru şekilde karşılanıyor.",
+    "Handshake auth (sockets/index.js) REST auth.middleware.js ile birebir aynı mantığı (jwt.verify + is_active DB'den taze kontrol) uyguluyor, kasıtlı ve gerekçeli bir kod tekrarıyla (imza uyumsuzluğu nedeniyle paylaşılan soyutlama zorlanmamış).",
+    "join:request yetki kontrolü, REST'in getRequestById'ini DOĞRUDAN reuse ediyor — ayrı bir yetki mantığı yeniden yazılmamış, iki yerde farklı davranma riski yok.",
+    "emitter.js'in singleton deseni circular-require'ı gerçekten önlüyor (server.js -> sockets/index.js -> requests.service.js -> sockets/emitter.js, geri döngü yok) ve gereksiz karmaşıklık içermiyor.",
+    "server.js'in http.createServer(app) geçişi, module.exports = app'i koruyarak 58 mevcut testin hiçbirini bozmadan yapılmış (66/66, 2 ardışık çalıştırmada doğrulandı) — bu görevin en yüksek riskli değişikliğiydi ve temiz çıktı.",
+    "Test dosyası (realtime.test.js) gerçek bir socket.io-client + gerçek Postgres kullanıyor, mock yok — projenin genel test felsefesiyle tutarlı; izolasyon testi (AC9) gerçek room-scoping'i somut olarak kanıtlıyor."
+  ],
+  "risks": [
+    "is_active sadece handshake anında kontrol ediliyor, bağlantı boyunca değil — atdd.md'de zaten kabul edilmiş bir sınırlama, burada tekrar bulgu olarak sayılmıyor ama commit onayında hatırlatılmalı.",
+    "AC5'in 'nonexistent request id' testi sadece geçerli-formatlı-ama-var-olmayan bir UUID (randomUUID()) ile test edilmiş; tamamen bozuk formatlı bir id (örn. 'abc') gönderilirse hata mesajı 'Talep bulunamadı' yerine genel 500 mesajına ('Talep getirilemedi, lütfen tekrar deneyin') düşüyor — sonuç aynı (error event, room'a katılım yok) ama mesaj metni farklı; bu AC'nin lafzını değil ruhunu karşılıyor, blocking değil."
+  ],
+  "caveman_review": {
+    "complexity": "low",
+    "unnecessary_files": 0,
+    "unnecessary_helpers": 0,
+    "unnecessary_abstractions": 0
+  },
+  "scope_review": {
+    "matches_atdd": true,
+    "scope_expansion": false
+  },
+  "ready_to_commit": {
+    "atdd_satisfied": true,
+    "tests_passed": true,
+    "no_critical_findings": true,
+    "scope_respected": true,
+    "caveman_satisfied": true,
+    "security_acceptable": true,
+    "maintainability_acceptable": true,
+    "no_blocking_risks": true
+  },
+  "verdict": "approve",
+  "follow_up": {
+    "fixed_at": "2026-08-31T00:00:00Z",
+    "summary": "İki bulgu da backend/services/requests.service.js'de düzeltildi (post-commit enrichment+emit try/catch ile izole edildi; addComment/listComments için ortak COMMENT_SELECT çıkarıldı). Orkestratör tarafından bağımsız doğrulandı: kod okundu, npm test 2 ardışık çalıştırmada 66/66 PASS, ayrıca fix sonrası ikinci bir canlı manuel doğrulama script'i (gerçek server + gerçek Postgres) 10/10 PASS. Başka hiçbir dosya değişmedi. Verdict approve-with-changes'ten approve'a yükseltildi."
+  }
+}
