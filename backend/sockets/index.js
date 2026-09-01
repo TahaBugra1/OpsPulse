@@ -36,6 +36,8 @@ function attachSockets(io) {
   });
 
   io.on('connection', (socket) => {
+    socket.join(`user:${socket.user.id}`);
+
     socket.on('join:request', async (requestId) => {
       try {
         await getRequestById(requestId, socket.user);

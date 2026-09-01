@@ -1,5 +1,5 @@
 const pool = require('./db');
-const { emitToRequestRoom } = require('../sockets/emitter');
+const { emitToRequestRoom, emitToUserRoom } = require('../sockets/emitter');
 
 const SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
 
@@ -105,6 +105,8 @@ async function claimRequest(requestId, user) {
     fail(403, 'Bu departmana ait değil');
   }
 
+  let notificationRow = null;
+
   const result = await withTransaction(async (client) => {
     const updateResult = await client.query(
       `UPDATE requests SET status = 'ASSIGNED', assigned_to = $1
@@ -125,11 +127,13 @@ async function claimRequest(requestId, user) {
       [updated.id, user.id]
     );
 
-    await client.query(
+    const notifResult = await client.query(
       `INSERT INTO notifications (user_id, request_id, type, message)
-       VALUES ($1, $2, 'REQUEST_ASSIGNED', $3)`,
+       VALUES ($1, $2, 'REQUEST_ASSIGNED', $3)
+       RETURNING *`,
       [updated.created_by, updated.id, `#${updated.request_number} numaralı talebiniz üstlenildi.`]
     );
+    notificationRow = notifResult.rows[0];
 
     return updated;
   });
@@ -139,6 +143,13 @@ async function claimRequest(requestId, user) {
     emitToRequestRoom(result.id, 'request:updated', enriched);
   } catch (emitErr) {
     console.error('request:updated emisyonu basarisiz oldu:', emitErr);
+  }
+  if (notificationRow) {
+    try {
+      emitToUserRoom(notificationRow.user_id, 'notification:created', notificationRow);
+    } catch (notifErr) {
+      console.error('notification:created emisyonu basarisiz oldu:', notifErr);
+    }
   }
   return result;
 }
@@ -187,6 +198,8 @@ async function changeRequestStatus(requestId, { status, note }, user) {
     }
   }
 
+  let notificationRow = null;
+
   const result = await withTransaction(async (client) => {
     let updateResult;
     if (request.status === 'OPEN' && status === 'REJECTED') {
@@ -219,11 +232,13 @@ async function changeRequestStatus(requestId, { status, note }, user) {
         status === 'COMPLETED'
           ? `#${updated.request_number} numaralı talebiniz tamamlandı.`
           : `#${updated.request_number} numaralı talebiniz reddedildi.`;
-      await client.query(
+      const notifResult = await client.query(
         `INSERT INTO notifications (user_id, request_id, type, message)
-         VALUES ($1, $2, $3, $4)`,
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
         [updated.created_by, updated.id, type, message]
       );
+      notificationRow = notifResult.rows[0];
     }
 
     return updated;
@@ -234,6 +249,13 @@ async function changeRequestStatus(requestId, { status, note }, user) {
     emitToRequestRoom(result.id, 'request:updated', enriched);
   } catch (emitErr) {
     console.error('request:updated emisyonu basarisiz oldu:', emitErr);
+  }
+  if (notificationRow) {
+    try {
+      emitToUserRoom(notificationRow.user_id, 'notification:created', notificationRow);
+    } catch (notifErr) {
+      console.error('notification:created emisyonu basarisiz oldu:', notifErr);
+    }
   }
   return result;
 }
@@ -406,6 +428,8 @@ async function addComment(requestId, content, user) {
 
   await getRequestById(requestId, user);
 
+  let notificationRow = null;
+
   const comment = await withTransaction(async (client) => {
     const insertResult = await client.query(
       `INSERT INTO request_comments (request_id, author_id, content)
@@ -423,11 +447,13 @@ async function addComment(requestId, content, user) {
     const recipient = user.id === created_by ? assigned_to : created_by;
 
     if (recipient && recipient !== user.id) {
-      await client.query(
+      const notifResult = await client.query(
         `INSERT INTO notifications (user_id, request_id, type, message)
-         VALUES ($1, $2, 'COMMENT_ADDED', $3)`,
+         VALUES ($1, $2, 'COMMENT_ADDED', $3)
+         RETURNING *`,
         [recipient, requestId, `#${request_number} numaralı talebe yeni bir yorum eklendi.`]
       );
+      notificationRow = notifResult.rows[0];
     }
 
     return insertedComment;
@@ -438,6 +464,13 @@ async function addComment(requestId, content, user) {
     emitToRequestRoom(requestId, 'request:commented', enrichedCommentResult.rows[0]);
   } catch (emitErr) {
     console.error('request:commented emisyonu basarisiz oldu:', emitErr);
+  }
+  if (notificationRow) {
+    try {
+      emitToUserRoom(notificationRow.user_id, 'notification:created', notificationRow);
+    } catch (notifErr) {
+      console.error('notification:created emisyonu basarisiz oldu:', notifErr);
+    }
   }
 
   return comment;

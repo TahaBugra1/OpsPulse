@@ -4,9 +4,17 @@ function setIo(io) {
   ioInstance = io;
 }
 
-function emitToRequestRoom(requestId, event, payload) {
+function emitToRoom(room, event, payload) {
   if (!ioInstance) return;
-  ioInstance.to(`request:${requestId}`).emit(event, payload);
+  ioInstance.to(room).emit(event, payload);
 }
 
-module.exports = { setIo, emitToRequestRoom };
+function emitToRequestRoom(requestId, event, payload) {
+  emitToRoom(`request:${requestId}`, event, payload);
+}
+
+function emitToUserRoom(userId, event, payload) {
+  emitToRoom(`user:${userId}`, event, payload);
+}
+
+module.exports = { setIo, emitToRequestRoom, emitToUserRoom };

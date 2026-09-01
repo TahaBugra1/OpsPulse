@@ -1,0 +1,52 @@
+{
+  "task": "realtime-3b",
+  "reviewed_at": "2026-09-01T00:00:00Z",
+  "summary": "Uygulama atdd.md'nin 9 AC'sini karşılıyor, plan.md'ye birebir sadık kalıyor (emitToRoom paylaşımı, otomatik user:<id> join, changePriority'ye dokunulmaması) ve 75/75 test PASS ile doğrulandı. realtime-3a'nın red-team dersi (try/catch izolasyonu) baştan uygulanmış olsa da, bu görevde YENİ ve farklı bir kaplama sorunu var: notification:created emisyonu, kendisiyle mantıksal olarak bağımsız olan request:updated/request:commented enrichment fetch'inin BAŞARISINA bağımlı hale gelmiş — üçü de aynı try/catch'in içinde, aynı sırada. Blocking değil (REST hiçbir zaman etkilenmiyor), ama AC7'nin ruhunu (bildirim emisyonunun kendi bağımsız başarısı) tam karşılamıyor.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "reliability",
+      "file": "backend/services/requests.service.js",
+      "issue": "claimRequest (141-149), changeRequestStatus (243-251) ve addComment (454-462) üçünde de, `notification:created` emisyonu aynı try bloğu İÇİNDE, `fetchEnrichedRequest`/enriched-comment SELECT'inden SONRA çalışıyor. `notificationRow` zaten transaction içinde `RETURNING *` ile alınmış, hiçbir ek DB sorgusuna ihtiyacı yok — ama pratikte, eğer `fetchEnrichedRequest` (veya addComment'in kendi enrichment sorgusu) hata verirse, `if (notificationRow) { emitToUserRoom(...) }` satırına HİÇ ulaşılmıyor ve zaten elde bulunan, DB'ye tamamen kalıcı olarak yazılmış bir bildirim sessizce hiç emit edilmeden kayboluyor. Bu, kendi başına başarısız OLMAYAN bir işlemin, kendisiyle ilgisiz başka bir işlemin (enrichment fetch) başarısızlığına bağımlı hale gelmesi demek.",
+      "better_approach": "notification:created emisyonunu ayrı bir try/catch'e al, enrichment fetch'in try/catch'inden BAĞIMSIZ çalıştır — örn: `try { const enriched = await fetchEnrichedRequest(result.id); emitToRequestRoom(...); } catch (e) { console.error(...); } if (notificationRow) { try { emitToUserRoom(notificationRow.user_id, 'notification:created', notificationRow); } catch (e) { console.error('notification:created emisyonu basarisiz oldu:', e); } }` — üç fonksiyonun hepsinde aynı desen.",
+      "reason": "atdd.md'nin AC7'si açıkça 'emisyon adımı herhangi bir sebeple hata verirse... asla üst REST fonksiyonunun başarılı dönüşünü etkilemez' diyor — bu teknik olarak karşılanıyor (REST hiçbir zaman kırılmıyor), ama AC'nin ruhu (her emisyonun KENDİ bağımsız başarı/başarısızlığı) şu anki kaplamada tam sağlanmıyor: iki bağımsız sinyal (request:updated ve notification:created) yapay olarak birbirine bağlı hale gelmiş, biri düşerse diğeri de gereksiz yere düşüyor.",
+      "outcome": "fixed"
+    }
+  ],
+  "strengths": [
+    "realtime-3a'nın red-team'de SONRADAN bulup düzelttirdiği 'commit sonrası emisyon try/catch ile izole edilsin' dersi bu görevde BAŞTAN uygulanmış (kullanıcının atdd.md kararı) — REST yanıtı hiçbir emisyon hatasından etkilenmiyor.",
+    "AC5 (çoklu sekme), AC6 (offline), AC8 (izolasyon), AC9 (gecikme) için HİÇ ekstra kod yazılmamış — Socket.io'nun room-broadcast semantiğine bilinçli olarak bırakılmış, CAVEMAN'ın 'gereksiz özel durum kodu ekleme' ilkesine tam uyum (plan.md'nin de açıkça istediği gibi).",
+    "emitter.js'deki `emitToRoom` iç helper'ı, `emitToRequestRoom`/`emitToUserRoom` arasındaki `ioInstance` guard tekrarını gerçekten önlüyor — gerekçeli, minimal, tek yeni soyutlama.",
+    "`changePriority`'ye hiç dokunulmamış (bu fonksiyonun hiç notification'ı yok) — plan.md'nin kararına ve kapsamına tam sadakat, kapsam genişlemesi yok.",
+    "changeRequestStatus/addComment'teki koşullu notification insert'lerin emisyon tarafında da doğru guard'landığı hem kodda hem de özel bir negatif testle (ASSIGNED->IN_PROGRESS notification:created YAYMAMALI) kanıtlanmış.",
+    "0 yeni dosya, 0 gereksiz public API — sadece `emitToUserRoom` eklenmiş, tam AC'nin gerektirdiği kadar."
+  ],
+  "risks": [
+    "is_active'in sadece handshake anında kontrol edilmesi — realtime-3a'dan devralınan, zaten kabul edilmiş bir sınırlama (kullanıcı kararı: bu görevde yeniden değerlendirilmedi)."
+  ],
+  "caveman_review": {
+    "complexity": "low",
+    "unnecessary_files": 0,
+    "unnecessary_helpers": 0,
+    "unnecessary_abstractions": 0
+  },
+  "scope_review": {
+    "matches_atdd": true,
+    "scope_expansion": false
+  },
+  "ready_to_commit": {
+    "atdd_satisfied": true,
+    "tests_passed": true,
+    "no_critical_findings": true,
+    "scope_respected": true,
+    "caveman_satisfied": true,
+    "security_acceptable": true,
+    "maintainability_acceptable": true,
+    "no_blocking_risks": true
+  },
+  "verdict": "approve",
+  "follow_up": {
+    "fixed_at": "2026-09-01T00:00:00Z",
+    "summary": "Bulgu backend/services/requests.service.js'de düzeltildi: notification:created emisyonu, claimRequest/changeRequestStatus/addComment'in üçünde de artık enrichment fetch'in try/catch'inden ayrı, kendi bağımsız try/catch'inde. Orkestratör tarafından bağımsız doğrulandı: kod okundu (3 fonksiyonun her biri), npm test 2 ardışık çalıştırmada 75/75 PASS. Başka hiçbir dosya değişmedi. Verdict approve-with-changes'ten approve'a yükseltildi."
+  }
+}
