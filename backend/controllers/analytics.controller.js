@@ -1,4 +1,4 @@
-const { getSummary, getSla, getWorkload } = require('../services/analytics.service');
+const { getSummary, getSla, getWorkload, getDistribution } = require('../services/analytics.service');
 
 async function getSummaryHandler(req, res) {
   try {
@@ -27,8 +27,18 @@ async function getWorkloadHandler(req, res) {
   }
 }
 
+async function getDistributionHandler(req, res) {
+  try {
+    const result = await getDistribution(req.query, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Dağılım verileri getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
 module.exports = {
   getSummaryHandler,
   getSlaHandler,
   getWorkloadHandler,
+  getDistributionHandler,
 };
