@@ -217,9 +217,112 @@ async function getDistribution(query, user) {
   return { status, requestType, department, priority, volumeOverTime };
 }
 
+async function getBottlenecks(user) {
+  const departmentId = scopeToDepartment(user);
+
+  const params = departmentId ? [departmentId] : [];
+
+  let slaDeptResult;
+  let slaTypeResult;
+  let stageResult;
+  let workloadResult;
+  try {
+    slaDeptResult = await pool.query(
+      `SELECT
+         d.name AS department_name,
+         COUNT(r.id)::int AS count
+       FROM departments d
+       LEFT JOIN requests r ON r.department_id = d.id
+         AND r.sla_due_at < now() AND r.status NOT IN ('COMPLETED', 'REJECTED')
+       WHERE d.is_active = true ${departmentId ? 'AND d.id = $1' : ''}
+       GROUP BY d.id, d.name
+       ORDER BY d.name`,
+      params
+    );
+
+    slaTypeResult = await pool.query(
+      `SELECT
+         rt.name AS request_type_name,
+         COUNT(r.id)::int AS count
+       FROM request_types rt
+       LEFT JOIN requests r ON r.request_type_id = rt.id
+         AND r.sla_due_at < now() AND r.status NOT IN ('COMPLETED', 'REJECTED')
+       WHERE rt.is_active = true ${departmentId ? 'AND rt.department_id = $1' : ''}
+       GROUP BY rt.id, rt.name
+       ORDER BY rt.name`,
+      params
+    );
+
+    stageResult = await pool.query(
+      `SELECT
+         AVG(EXTRACT(EPOCH FROM (t_assigned.created_at - r.created_at)) / 3600)
+           FILTER (WHERE t_assigned.created_at IS NOT NULL) AS open_to_assigned_avg,
+         AVG(EXTRACT(EPOCH FROM (t_in_progress.created_at - t_assigned.created_at)) / 3600)
+           FILTER (WHERE t_assigned.created_at IS NOT NULL AND t_in_progress.created_at IS NOT NULL) AS assigned_to_in_progress_avg,
+         AVG(EXTRACT(EPOCH FROM (t_completed.created_at - t_in_progress.created_at)) / 3600)
+           FILTER (WHERE t_in_progress.created_at IS NOT NULL AND t_completed.created_at IS NOT NULL) AS in_progress_to_completed_avg
+       FROM requests r
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM request_history
+         WHERE request_id = r.id AND action = 'STATUS_CHANGED' AND new_value = 'ASSIGNED'
+         ORDER BY created_at ASC LIMIT 1
+       ) t_assigned ON true
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM request_history
+         WHERE request_id = r.id AND action = 'STATUS_CHANGED' AND new_value = 'IN_PROGRESS'
+         ORDER BY created_at ASC LIMIT 1
+       ) t_in_progress ON true
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM request_history
+         WHERE request_id = r.id AND action = 'STATUS_CHANGED' AND new_value = 'COMPLETED'
+         ORDER BY created_at ASC LIMIT 1
+       ) t_completed ON true
+       ${departmentId ? 'WHERE r.department_id = $1' : ''}`,
+      params
+    );
+
+    workloadResult = await pool.query(
+      `SELECT
+         TRIM(CONCAT(u.name, ' ', COALESCE(u.surname, ''))) AS authority_name,
+         d.name AS department_name,
+         COUNT(r.id)::int AS active_count
+       FROM users u
+       JOIN departments d ON d.id = u.department_id
+       LEFT JOIN requests r ON r.assigned_to = u.id AND r.status IN ('ASSIGNED', 'IN_PROGRESS')
+       WHERE u.role = 'DEPARTMENT_AUTHORITY' AND u.is_active = true ${departmentId ? 'AND u.department_id = $1' : ''}
+       GROUP BY u.id, u.name, u.surname, d.name
+       ORDER BY active_count DESC, authority_name ASC`,
+      params
+    );
+  } catch (dbErr) {
+    fail(500, 'Darboğaz verileri getirilemedi, lütfen tekrar deneyin');
+  }
+
+  const slaBreachByDepartment = slaDeptResult.rows.map((r) => ({ department: r.department_name, count: r.count }));
+  const slaBreachByRequestType = slaTypeResult.rows.map((r) => ({ requestType: r.request_type_name, count: r.count }));
+
+  const roundOrNull = (value) => (value === null ? null : Math.round((Number(value) + Number.EPSILON) * 100) / 100);
+
+  const stageRow = stageResult.rows[0];
+  const stageDurations = [
+    { stage: 'OPEN_TO_ASSIGNED', avg_hours: roundOrNull(stageRow.open_to_assigned_avg) },
+    { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: roundOrNull(stageRow.assigned_to_in_progress_avg) },
+    { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: roundOrNull(stageRow.in_progress_to_completed_avg) },
+  ];
+
+  const authorityWorkload = workloadResult.rows.map((r) => ({
+    authority_name: r.authority_name,
+    department_name: r.department_name,
+    active_count: r.active_count,
+  }));
+
+  return { slaBreachByDepartment, slaBreachByRequestType, stageDurations, authorityWorkload };
+}
+
 module.exports = {
   getSummary,
   getSla,
   getWorkload,
   getDistribution,
+  getBottlenecks,
 };
