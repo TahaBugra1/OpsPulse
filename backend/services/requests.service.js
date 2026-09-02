@@ -1,5 +1,5 @@
 const pool = require('./db');
-const { emitToRequestRoom, emitToUserRoom } = require('../sockets/emitter');
+const { emitToRequestRoom, emitToUserRoom, emitToDepartmentQueue } = require('../sockets/emitter');
 
 const SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
 
@@ -151,6 +151,11 @@ async function claimRequest(requestId, user) {
       console.error('notification:created emisyonu basarisiz oldu:', notifErr);
     }
   }
+  try {
+    emitToDepartmentQueue(result.department_id, 'request:removedFromQueue', { id: result.id });
+  } catch (queueErr) {
+    console.error('request:removedFromQueue emisyonu basarisiz oldu:', queueErr);
+  }
   return result;
 }
 
@@ -244,6 +249,8 @@ async function changeRequestStatus(requestId, { status, note }, user) {
     return updated;
   });
 
+  const wasOpenRejection = request.status === 'OPEN' && status === 'REJECTED';
+
   try {
     const enriched = await fetchEnrichedRequest(result.id);
     emitToRequestRoom(result.id, 'request:updated', enriched);
@@ -255,6 +262,13 @@ async function changeRequestStatus(requestId, { status, note }, user) {
       emitToUserRoom(notificationRow.user_id, 'notification:created', notificationRow);
     } catch (notifErr) {
       console.error('notification:created emisyonu basarisiz oldu:', notifErr);
+    }
+  }
+  if (wasOpenRejection) {
+    try {
+      emitToDepartmentQueue(result.department_id, 'request:removedFromQueue', { id: result.id });
+    } catch (queueErr) {
+      console.error('request:removedFromQueue emisyonu basarisiz oldu:', queueErr);
     }
   }
   return result;

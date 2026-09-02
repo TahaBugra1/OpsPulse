@@ -17,4 +17,8 @@ function emitToUserRoom(userId, event, payload) {
   emitToRoom(`user:${userId}`, event, payload);
 }
 
-module.exports = { setIo, emitToRequestRoom, emitToUserRoom };
+function emitToDepartmentQueue(departmentId, event, payload) {
+  emitToRoom(`department-queue:${departmentId}`, event, payload);
+}
+
+module.exports = { setIo, emitToRequestRoom, emitToUserRoom, emitToDepartmentQueue };
