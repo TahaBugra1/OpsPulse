@@ -37,6 +37,9 @@ function attachSockets(io) {
 
   io.on('connection', (socket) => {
     socket.join(`user:${socket.user.id}`);
+    if (socket.user.role === 'DEPARTMENT_AUTHORITY') {
+      socket.join(`department-queue:${socket.user.department_id}`);
+    }
 
     socket.on('join:request', async (requestId) => {
       try {
