@@ -375,3 +375,270 @@ test('GET /api/analytics/sla and /api/analytics/workload - EMPLOYEE gets 403 on 
 // AC11: SKIPPED - the <300ms performance benchmark is not asserted with a hard timing threshold in
 // this node:test suite (flaky under CI/load); it was validated live during code-copilot's own
 // verification and is re-checked separately by the /verify step.
+
+// AC1 & AC2 & AC9: GET /api/analytics/distribution as ADMIN with no query params returns all 5
+// status entries, all 3 priority entries, at least 1 department/requestType row, and a default
+// 30-entry chronological volumeOverTime (proves the `days` default of 30 is applied).
+test('GET /api/analytics/distribution - ADMIN with no query params gets full breakdown, default 30-day volumeOverTime', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/distribution')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.equal(res.body.status.length, 5);
+  assert.deepEqual(
+    res.body.status.map((r) => r.status),
+    ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED']
+  );
+
+  assert.equal(res.body.priority.length, 3);
+  assert.deepEqual(
+    res.body.priority.map((r) => r.priority),
+    ['HIGH', 'MEDIUM', 'LOW']
+  );
+
+  assert.ok(Array.isArray(res.body.department));
+  assert.ok(res.body.department.length >= 1);
+  assert.ok(Array.isArray(res.body.requestType));
+  assert.ok(res.body.requestType.length >= 1);
+
+  assert.ok(Array.isArray(res.body.volumeOverTime));
+  assert.equal(res.body.volumeOverTime.length, 30);
+  assert.ok(res.body.volumeOverTime[0].date < res.body.volumeOverTime[29].date);
+});
+
+// AC3: GET /api/analytics/distribution as EMPLOYEE -> 403.
+test('GET /api/analytics/distribution - EMPLOYEE gets 403', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+
+  const res = await request(app)
+    .get('/api/analytics/distribution')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(res.status, 403);
+});
+
+// AC4: GET /api/analytics/distribution as DEPARTMENT_AUTHORITY -> department breakdown contains
+// exactly 1 row (their own department only).
+test('GET /api/analytics/distribution - DEPARTMENT_AUTHORITY sees exactly one row for their own department', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/distribution')
+    .set('Authorization', `Bearer ${hrAuthorityToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.department.length, 1);
+  assert.equal(res.body.department[0].department, 'HR');
+});
+
+// AC5: GET /api/analytics/distribution?days=7 -> volumeOverTime has exactly 7 entries.
+test('GET /api/analytics/distribution - days=7 gives a 7-entry volumeOverTime', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/distribution?days=7')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.volumeOverTime.length, 7);
+});
+
+// AC6: GET /api/analytics/distribution with an invalid days value -> 400 with a non-empty message.
+test('GET /api/analytics/distribution - invalid days values get 400', async (t) => {
+  const invalidValues = ['abc', '-5', '0', '91'];
+  for (const days of invalidValues) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await request(app)
+      .get(`/api/analytics/distribution?days=${days}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+    assert.equal(res.status, 400, `days=${days} expected 400, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.ok(res.body.message || res.body.error, `days=${days} expected a non-empty error message`);
+  }
+});
+
+// AC7: GET /api/analytics/distribution?days=1 and ?days=90 (boundary values) -> both 200.
+test('GET /api/analytics/distribution - days=1 and days=90 boundary values are accepted', async (t) => {
+  const res1 = await request(app)
+    .get('/api/analytics/distribution?days=1')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res1.status, 200, JSON.stringify(res1.body));
+  assert.equal(res1.body.volumeOverTime.length, 1);
+
+  const res90 = await request(app)
+    .get('/api/analytics/distribution?days=90')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res90.status, 200, JSON.stringify(res90.body));
+  assert.equal(res90.body.volumeOverTime.length, 90);
+});
+
+// AC8: GET /api/analytics/distribution for a DEPARTMENT_AUTHORITY of a zero-request department ->
+// status/priority still show all 5/3 entries at 0, department shows exactly 1 row (Finance) at 0,
+// volumeOverTime has all `days` entries present, all at 0.
+test('GET /api/analytics/distribution - DEPARTMENT_AUTHORITY of a zero-request department sees all-zero breakdown', async (t) => {
+  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
+  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
+  const financeDeptId = financeDept.rows[0].id;
+
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
+  const financeAuthorityInsert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
+    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
+  );
+  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
+  t.after(async () => {
+    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
+  });
+
+  const financeLogin = await request(app)
+    .post('/api/auth/login')
+    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
+  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+
+  const days = 5;
+  const res = await request(app)
+    .get(`/api/analytics/distribution?days=${days}`)
+    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.equal(res.body.status.length, 5);
+  assert.ok(res.body.status.every((r) => r.count === 0));
+
+  assert.equal(res.body.priority.length, 3);
+  assert.ok(res.body.priority.every((r) => r.count === 0));
+
+  assert.equal(res.body.department.length, 1);
+  assert.deepEqual(res.body.department[0], { department: 'Finance', count: 0 });
+
+  assert.equal(res.body.volumeOverTime.length, days);
+  assert.ok(res.body.volumeOverTime.every((r) => r.count === 0));
+});
+
+// AC1: GET /api/analytics/bottlenecks as ADMIN with no query params -> 200, slaBreachByDepartment
+// and slaBreachByRequestType are non-empty arrays covering all active departments/types, every
+// count is a number >= 0.
+test('GET /api/analytics/bottlenecks - ADMIN sees all departments and request types with numeric counts', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.ok(Array.isArray(res.body.slaBreachByDepartment));
+  assert.ok(res.body.slaBreachByDepartment.length >= 1);
+  assert.ok(
+    res.body.slaBreachByDepartment.every((r) => typeof r.count === 'number' && r.count >= 0)
+  );
+
+  assert.ok(Array.isArray(res.body.slaBreachByRequestType));
+  assert.ok(res.body.slaBreachByRequestType.length >= 1);
+  assert.ok(
+    res.body.slaBreachByRequestType.every((r) => typeof r.count === 'number' && r.count >= 0)
+  );
+});
+
+// AC2: GET /api/analytics/bottlenecks - stageDurations has exactly 3 entries, in the fixed order,
+// each avg_hours either null or a number.
+test('GET /api/analytics/bottlenecks - stageDurations has exactly 3 entries in fixed order', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.equal(res.body.stageDurations.length, 3);
+  assert.deepEqual(
+    res.body.stageDurations.map((r) => r.stage),
+    ['OPEN_TO_ASSIGNED', 'ASSIGNED_TO_IN_PROGRESS', 'IN_PROGRESS_TO_COMPLETED']
+  );
+  for (const stage of res.body.stageDurations) {
+    assert.ok(
+      stage.avg_hours === null || typeof stage.avg_hours === 'number',
+      `avg_hours for ${stage.stage} should be null or a number, got ${JSON.stringify(stage.avg_hours)}`
+    );
+  }
+});
+
+// AC3: GET /api/analytics/bottlenecks - authorityWorkload has at least 2 entries (the seeded IT +
+// HR authorities), sorted by active_count descending (pairwise non-increasing check).
+test('GET /api/analytics/bottlenecks - authorityWorkload includes seeded authorities sorted by active_count descending', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.ok(Array.isArray(res.body.authorityWorkload));
+  assert.ok(res.body.authorityWorkload.length >= 2);
+
+  for (let i = 1; i < res.body.authorityWorkload.length; i += 1) {
+    assert.ok(
+      res.body.authorityWorkload[i - 1].active_count >= res.body.authorityWorkload[i].active_count,
+      `authorityWorkload not sorted descending at index ${i}: ${JSON.stringify(res.body.authorityWorkload)}`
+    );
+  }
+});
+
+// AC4: GET /api/analytics/bottlenecks as EMPLOYEE -> 403.
+test('GET /api/analytics/bottlenecks - EMPLOYEE gets 403', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(res.status, 403);
+});
+
+// AC5: GET /api/analytics/bottlenecks as DEPARTMENT_AUTHORITY (seeded IT authority) -> scoped to
+// own department only: slaBreachByDepartment has exactly 1 entry ('IT'), authorityWorkload has
+// exactly 1 entry (the seeded IT authority is the only DEPARTMENT_AUTHORITY in IT).
+test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY is scoped to own department only', async (t) => {
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  assert.equal(res.body.slaBreachByDepartment.length, 1);
+  assert.equal(res.body.slaBreachByDepartment[0].department, 'IT');
+
+  assert.equal(res.body.authorityWorkload.length, 1);
+});
+
+// AC6 & AC7 & AC8: GET /api/analytics/bottlenecks for a DEPARTMENT_AUTHORITY of a zero-request
+// department (throwaway Finance authority) -> 200, whole response well-formed with no crash:
+// slaBreachByDepartment has exactly 1 entry with count 0 (AC8), authorityWorkload has exactly 1
+// entry with active_count 0 (AC6), and all 3 stageDurations entries are null (AC7, no request in
+// Finance has ever made any stage transition).
+test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY of a zero-request department gets an all-zero/null payload', async (t) => {
+  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
+  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
+  const financeDeptId = financeDept.rows[0].id;
+
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
+  const financeAuthorityInsert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
+    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
+  );
+  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
+  t.after(async () => {
+    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
+  });
+
+  const financeLogin = await request(app)
+    .post('/api/auth/login')
+    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
+  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+
+  const res = await request(app)
+    .get('/api/analytics/bottlenecks')
+    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  // AC8: whole response well-formed, no crash, no missing keys.
+  assert.equal(res.body.slaBreachByDepartment.length, 1);
+  assert.deepEqual(res.body.slaBreachByDepartment[0], { department: 'Finance', count: 0 });
+
+  // AC6: authorityWorkload has exactly 1 entry with active_count 0 (not missing).
+  assert.equal(res.body.authorityWorkload.length, 1);
+  assert.equal(res.body.authorityWorkload[0].active_count, 0);
+
+  // AC7: all 3 stageDurations entries are null (no request in Finance has ever made any transition).
+  assert.equal(res.body.stageDurations.length, 3);
+  assert.ok(res.body.stageDurations.every((r) => r.avg_hours === null));
+});
