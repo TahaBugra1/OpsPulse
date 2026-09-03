@@ -9,3 +9,6 @@ build/
 
 # Local dev toolkit, not part of the shipped project
 /atdd-pipeline/
+
+# Playwright MCP live-verification output (snapshots/console logs)
+/.playwright-mcp/
