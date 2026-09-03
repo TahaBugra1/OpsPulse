@@ -9,7 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/context/AuthContext'
-import { ApiError, apiPost } from '@/lib/api'
+import { ApiError, AUTH_GOOGLE_PATH, AUTH_LOGIN_PATH, apiPost } from '@/lib/api'
 import { type AuthUser } from '@/lib/authStorage'
 import { loginSchema, type LoginFormValues } from '@/lib/validation'
 
@@ -46,7 +46,7 @@ export default function Login() {
     setLoading(true)
     setError(null)
     try {
-      const result = await apiPost<LoginResponse>('/api/auth/login', {
+      const result = await apiPost<LoginResponse>(AUTH_LOGIN_PATH, {
         email: values.email,
         password: values.password,
         rememberMe,
@@ -64,7 +64,7 @@ export default function Login() {
     setLoading(true)
     setError(null)
     try {
-      const result = await apiPost<LoginResponse>('/api/auth/google', {
+      const result = await apiPost<LoginResponse>(AUTH_GOOGLE_PATH, {
         id_token: credentialResponse.credential,
         rememberMe,
       })
