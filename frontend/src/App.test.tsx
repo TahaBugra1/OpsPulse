@@ -62,29 +62,28 @@ describe('App routing', () => {
     expect(screen.queryByText(/Hoş geldin/)).not.toBeInTheDocument()
   })
 
-  // AC2: authenticated user hitting "/" sees the home shell with name/role
-  it('renders the home page for an authenticated visitor', async () => {
+  // AC2: authenticated user hitting "/" sees the app shell and is redirected to /requests
+  it('renders the app shell and redirects to /requests for an authenticated visitor', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     seedSession()
     setPath('/')
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByText('Hoş geldin, Taha (EMPLOYEE)')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
+    expect(screen.getByText('Çıkış Yap')).toBeInTheDocument()
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
   })
 
-  // AC3: authenticated user hitting /login is redirected to "/", login form never rendered
-  it('redirects an authenticated visitor away from /login to the home page', async () => {
+  // AC3: authenticated user hitting /login is redirected to /requests, login form never rendered
+  it('redirects an authenticated visitor away from /login to /requests', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     seedSession()
     setPath('/login')
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByText('Hoş geldin, Taha (EMPLOYEE)')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
   })
 
@@ -92,14 +91,13 @@ describe('App routing', () => {
   // clears the TanStack Query cache, and the user ends up redirected to /login.
   it('logs out, clears the query cache, and redirects to /login on a generic 401', async () => {
     const clearSpy = vi.spyOn(QueryClient.prototype, 'clear')
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     seedSession()
     setPath('/')
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByText('Hoş geldin, Taha (EMPLOYEE)')).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
 
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(401, { message: 'Unauthorized' }))
     await expect(apiGet('/api/requests')).rejects.toThrow()

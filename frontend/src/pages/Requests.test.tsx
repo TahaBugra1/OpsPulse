@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Requests from './Requests'
+import { AuthProvider } from '@/context/AuthContext'
+import type { AuthUser } from '@/lib/authStorage'
 import type { RequestListItem } from '@/lib/requests'
 
 function jsonResponse(status: number, body: unknown) {
@@ -50,16 +52,33 @@ function DetailProbe() {
   return <div>DETAIL PAGE for id={id}</div>
 }
 
-function renderRequests() {
+const fakeUser: AuthUser = {
+  id: 'user-1',
+  name: 'Taha',
+  surname: null,
+  email: 'taha@example.com',
+  role: 'EMPLOYEE',
+  department_id: null,
+}
+
+function seedSession(user: AuthUser = fakeUser) {
+  sessionStorage.setItem('opspulse_token', 'tok-123')
+  sessionStorage.setItem('opspulse_user', JSON.stringify(user))
+}
+
+function renderRequests(user: AuthUser = fakeUser) {
+  seedSession(user)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/requests']}>
-        <Routes>
-          <Route path="/requests" element={<Requests />} />
-          <Route path="/requests/:id" element={<DetailProbe />} />
-        </Routes>
-      </MemoryRouter>
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/requests']}>
+          <Routes>
+            <Route path="/requests" element={<Requests />} />
+            <Route path="/requests/:id" element={<DetailProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>
     </QueryClientProvider>,
   )
 }
@@ -185,5 +204,24 @@ describe('Requests page', () => {
 
     expect(within(overdueRow as HTMLElement).getByText('Gecikmiş')).toBeInTheDocument()
     expect(within(onTimeRow as HTMLElement).queryByText('Gecikmiş')).not.toBeInTheDocument()
+  })
+
+  // AC10: page title is role-aware
+  it('shows "Taleplerim" as the title for an EMPLOYEE user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
+    await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
+  })
+
+  it('shows "Departman Talepleri" as the title for a DEPARTMENT_AUTHORITY user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
+    await waitFor(() => expect(screen.getByText('Departman Talepleri')).toBeInTheDocument())
+  })
+
+  it('shows "Tüm Talepler" as the title for an ADMIN user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'ADMIN' })
+    await waitFor(() => expect(screen.getByText('Tüm Talepler')).toBeInTheDocument())
   })
 })

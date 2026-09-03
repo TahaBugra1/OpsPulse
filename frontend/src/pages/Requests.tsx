@@ -10,17 +10,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { PRIORITY_LABELS, STATUS_LABELS, useRequests } from '@/lib/requests'
+import { useAuth } from '@/context/AuthContext'
+import { PRIORITY_LABELS, REQUESTS_PAGE_TITLE, STATUS_LABELS, useRequests } from '@/lib/requests'
 
 export default function Requests() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { data, isPending, isError, error, refetch } = useRequests()
 
   return (
-    <main className="flex min-h-svh justify-center bg-background p-6">
-      <Card className="w-full max-w-4xl">
+    <Card className="w-full max-w-4xl">
         <CardHeader>
-          <CardTitle className="text-2xl">Talepler</CardTitle>
+          <CardTitle className="text-2xl">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</CardTitle>
         </CardHeader>
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -87,7 +88,6 @@ export default function Requests() {
             </Table>
           )}
         </CardContent>
-      </Card>
-    </main>
+    </Card>
   )
 }

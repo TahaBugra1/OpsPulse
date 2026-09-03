@@ -48,6 +48,12 @@ export const PRIORITY_LABELS: Record<string, string> = {
   HIGH: 'Yüksek',
 }
 
+export const REQUESTS_PAGE_TITLE: Record<string, string> = {
+  EMPLOYEE: 'Taleplerim',
+  DEPARTMENT_AUTHORITY: 'Departman Talepleri',
+  ADMIN: 'Tüm Talepler',
+}
+
 export function useRequests() {
   return useQuery({
     queryKey: ['requests'],

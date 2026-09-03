@@ -1,12 +1,13 @@
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
+import { AppShell, getLandingPath } from '@/components/AppShell'
 import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { setUnauthorizedHandler } from '@/lib/api'
-import Home from '@/pages/Home'
+import ComingSoon from '@/pages/ComingSoon'
 import Login from '@/pages/Login'
 import NotFound from '@/pages/NotFound'
 import RequestDetail from '@/pages/RequestDetail'
@@ -28,6 +29,11 @@ function AuthWiring() {
   return null
 }
 
+function RootRedirect() {
+  const { user } = useAuth()
+  return <Navigate to={getLandingPath(user!.role)} replace />
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -37,9 +43,13 @@ function App() {
           <BrowserRouter>
             <Routes>
               <Route element={<ProtectedRoute />}>
-                <Route path="/" element={<Home />} />
-                <Route path="/requests" element={<Requests />} />
-                <Route path="/requests/:id" element={<RequestDetail />} />
+                <Route element={<AppShell />}>
+                  <Route index element={<RootRedirect />} />
+                  <Route path="/requests" element={<Requests />} />
+                  <Route path="/requests/:id" element={<RequestDetail />} />
+                  <Route path="/queue" element={<ComingSoon title="Kuyruk" />} />
+                  <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
+                </Route>
               </Route>
               <Route element={<GuestOnlyRoute />}>
                 <Route path="/login" element={<Login />} />

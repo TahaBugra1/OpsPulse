@@ -19,8 +19,7 @@ export default function RequestDetail() {
   }
 
   return (
-    <main className="flex min-h-svh justify-center bg-background p-6">
-      <Card className="w-full max-w-2xl">
+    <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="text-2xl">Talep Detayı</CardTitle>
         </CardHeader>
@@ -103,7 +102,6 @@ export default function RequestDetail() {
             </div>
           )}
         </CardContent>
-      </Card>
-    </main>
+    </Card>
   )
 }
