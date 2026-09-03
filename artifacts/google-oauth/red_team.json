@@ -1,0 +1,63 @@
+{
+  "task": "google-oauth",
+  "reviewed_at": "2026-09-03T00:00:00Z",
+  "summary": "Uygulama atdd.md'nin 8 AC'sini karşılıyor, plan.md'ye tam sadık (kritik rate-limiter hatası doğru önlendi, mevcut register()/login() fonksiyonları hiç değişmedi). 102/102 test PASS, canlı sanity check ile de doğrulandı. İki bulgu var: (1) verify'ın raporladığı, google-auth-library'nin transitive bağımlılığından gelen moderate-severity npm audit uyarısı — düşük istismar edilebilirlik, blocking değil; (2) loginWithGoogle'ın yeni-kullanıcı INSERT'i, register()'ın aksine unique-constraint (23505) race'ini özel olarak ele almıyor — küçük bir tutarsızlık, işlevsel bir kırılma değil.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "security",
+      "file": "backend/package.json",
+      "issue": "google-auth-library@^9.0.0 eklenmesi, transitive bağımlılık zincirinde (gaxios → uuid) moderate-severity bir npm audit bulgusu getiriyor: 'uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided'. verify_report.md bunu zaten tespit edip kaynak ayrıştırması yapmıştı (bu görevden önce var olan qs/express zincirinden ayrı, gerçekten bu görevle gelen tek parça bu).",
+      "better_approach": "Şu an için aksiyon gerekmiyor — istismar edilebilirlik düşük (bu proje `uuid`'i hiç doğrudan çağırmıyor, `gaxios`'un iç kullanımı attacker-controlled bir `buf` parametresi geçirmiyor gerçek kullanım senaryosunda). İzlenmesi gereken bir teknik borç: `google-auth-library`'nin gelecekteki bir minor/patch sürümü `gaxios`'u güncelleyince `npm update google-auth-library` ile kendiliğinden çözülecek. `npm audit fix --force` ŞİMDİ çalıştırılmamalı (breaking bir major bump'a yol açabilir, bu görevin kapsamı dışında bir risk).",
+      "reason": "CLAUDE.md'nin güvenlik felsefesi (Helmet+rate-limit her zaman aktif, iki katmanlı yetkilendirme) somut, aktif istismar riski taşıyan açıklara odaklanıyor — bu, dolaylı ve düşük-etkili bir transitive bağımlılık uyarısı, projenin gerçek güvenlik yüzeyini (auth akışının kendisi) etkilemiyor.",
+      "outcome": "no_change_needed"
+    },
+    {
+      "severity": "low",
+      "category": "reliability",
+      "file": "backend/services/auth.service.js",
+      "issue": "loginWithGoogle'ın yeni-kullanıcı INSERT'inin catch bloğu (satır ~145), register()'ın AYNI senaryodaki (satır 70-73) `if (dbErr.code === '23505') { fail(409, 'Bu email zaten kayıtlı'); }` özel durumunu TEKRARLAMIYOR — sadece genel `fail(500, ...)`'a düşüyor. Pratik etki: iki eşzamanlı Google girişi aynı YENİ email için yarışırsa (nadir ama mümkün — örn. bir kullanıcı çift tıklama/çoklu sekme), kaybeden istek kullanıcıya 500 (belirsiz 'giriş yapılamadı') gösterir, register()'daki gibi net bir 409 değil. Kullanıcı deneyimi biraz daha kötü ama gerçek bir veri bütünlüğü sorunu YOK — ikinci deneme, satırın artık var olduğunu görüp linking yoluna girer ve başarılı olur.",
+      "better_approach": "register()'daki AYNI `if (dbErr.code === '23505') { fail(409, ...); }` deseni loginWithGoogle'ın INSERT catch'ine de eklenebilir — tutarlılık için, aynı dosyada zaten var olan bir deseni tekrar kullanmak, yeni bir kavram icat etmiyor.",
+      "reason": "Aynı dosyada aynı senaryo (email unique constraint çakışması) için iki farklı davranış olması bir tutarsızlık — atdd.md'nin AC'lerinde bu spesifik race koşulu sorulmamıştı, bu yüzden code-copilot'u suçlayan bir bulgu değil, ama küçük bir iyileştirme fırsatı.",
+      "outcome": "fixed"
+    }
+  ],
+  "strengths": [
+    "Plan.md'nin en kritik bulgusu (loginLimiter'ın /google route'una eklenmemesi gerektiği, aksi halde tüm kullanıcıların paylaşılan bir 5-istek kotasına düşüp kilitlenmesi) doğru uygulanmış — kod okunarak doğrulandı.",
+    "register()/login()/fail()/toPublicUser()/signToken()/emailDomain()/EMAIL_RE hiçbiri değişmemiş (byte-for-byte doğrulandı) — mevcut auth davranışı hiç bozulmadan yeni bir akış eklenmiş.",
+    "verifyGoogleToken'ın enjekte edilebilir olması (AC8) sayesinde tüm hesap eşleştirme/oluşturma mantığı gerçek Google ağ çağrısı olmadan test edilmiş — hem otomatik testlerde hem orkestratörün canlı sanity check'inde kanıtlanmış.",
+    "Rol her zaman 'EMPLOYEE' SQL metninde sabit yazılı (register()'daki aynı desen) — CLAUDE.md'nin 'role selection asla registration'da olmasın' kilit kararına tam uyum, parametrik bir rol enjeksiyonu riski yok.",
+    "password_hash hiçbir response'ta yer almıyor (toPublicUser'ın doğal sonucu) — canlı doğrulandı.",
+    "Domain kısıtlaması sadece yeni kullanıcı oluşturmada uygulanıyor, linking'te yok — CLAUDE.md'nin email-doğrulama-eksikliği riskini azaltma stratejisiyle tutarlı, plan.md'nin kararı doğru uygulanmış.",
+    "Test dosyası (auth.google.test.js) HTTP katmanını hiç test etmiyor (bilinçli, gerçek bir Google token olmadan mümkün değil) — bu sınırlamayı gizlemek yerine hem kod hem rapor açıkça belirtmiş."
+  ],
+  "risks": [
+    "Google'ın `given_name` claim'i teorik olarak (OpenID Connect spesifikasyonunda) opsiyonel — eğer hiç gelmezse (çok düşük olasılık, gerçek Google hesaplarında neredeyse her zaman dolu), `users.name` NOT NULL kısıtına `undefined` geçmeye çalışılır, pg driver bunu bir hata olarak fırlatır ve mevcut catch bloğu bunu genel 500'e çevirir — çökme yok ama net olmayan bir hata mesajı. atdd.md'de bu senaryo sorulmadı, formal bir bulgu değil, sadece bilinen bir sınır durumu.",
+    "gaxios/uuid transitive zafiyeti (yukarıdaki bulgu) — izlenmesi gereken bir teknik borç, aktif bir tehdit değil."
+  ],
+  "caveman_review": {
+    "complexity": "low",
+    "unnecessary_files": 0,
+    "unnecessary_helpers": 0,
+    "unnecessary_abstractions": 0
+  },
+  "scope_review": {
+    "matches_atdd": true,
+    "scope_expansion": false
+  },
+  "ready_to_commit": {
+    "atdd_satisfied": true,
+    "tests_passed": true,
+    "no_critical_findings": true,
+    "scope_respected": true,
+    "caveman_satisfied": true,
+    "security_acceptable": true,
+    "maintainability_acceptable": true,
+    "no_blocking_risks": true
+  },
+  "verdict": "approve-with-changes",
+  "follow_up": {
+    "fixed_at": "2026-09-03T00:00:00Z",
+    "summary": "2 bulgudan 1'i düzeltildi: backend/services/auth.service.js'deki loginWithGoogle artık register()'ın 23505 (unique-constraint) özel durumunu aynı şekilde ele alıyor. Diğer bulgu (gaxios/uuid transitive npm audit uyarısı) kendi önerisi gereği kasıtlı olarak düzeltilmedi (izlenen, kabul edilmiş bir teknik borç, kod değişikliği gerektirmiyor). Orkestratör tarafından bağımsız doğrulandı: kod okundu, npm test 2 ardışık çalıştırmada 102/102 PASS. Başka hiçbir dosya değişmedi. Verdict approve-with-changes olarak kalıyor (kabul edilmiş, düzeltilmeyen bir güvenlik bulgusu hâlâ var, bu yüzden approve'a yükseltilmedi — ama blocking değil)."
+  }
+}
