@@ -1,7 +1,7 @@
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { PRIORITY_LABELS, STATUS_LABELS, useRequest, useRequestComments } from '@/lib/requests'
 
 export default function RequestDetail() {
@@ -19,10 +19,9 @@ export default function RequestDetail() {
   }
 
   return (
-    <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle className="text-2xl">Talep Detayı</CardTitle>
-        </CardHeader>
+    <div className="flex flex-col gap-4">
+      <h1 className="text-2xl font-semibold">Talep Detayı</h1>
+      <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
 
@@ -102,6 +101,7 @@ export default function RequestDetail() {
             </div>
           )}
         </CardContent>
-    </Card>
+      </Card>
+    </div>
   )
 }

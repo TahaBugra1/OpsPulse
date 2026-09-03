@@ -224,4 +224,13 @@ describe('Requests page', () => {
     renderRequests({ ...fakeUser, role: 'ADMIN' })
     await waitFor(() => expect(screen.getByText('Tüm Talepler')).toBeInTheDocument())
   })
+
+  // Round-2 structure: the title is a real <h1> above the card, not a CardTitle div inside it
+  it('renders the page title as a real heading element', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Taleplerim' })).toBeInTheDocument(),
+    )
+  })
 })

@@ -106,9 +106,9 @@ describe('AppShell', () => {
   })
 
   // AC7: active nav link is visually marked (checked as a standalone class token, since
-  // the inactive/base className also contains "hover:bg-accent" as a substring)
+  // the inactive/base className also contains "hover:bg-sidebar-accent" as a substring)
   function hasActiveClass(element: HTMLElement) {
-    return element.className.split(/\s+/).includes('bg-accent')
+    return element.className.split(/\s+/).includes('bg-sidebar-primary')
   }
 
   it('marks the current route\'s nav link active and leaves others inactive', () => {
@@ -150,6 +150,51 @@ describe('AppShell', () => {
       expect(within(nav).getByText('Kullanıcılar')).toBeInTheDocument()
       expect(screen.getByText(/Taha/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Çıkış Yap' })).toBeInTheDocument()
+    })
+  })
+
+  // AC10: the sidebar user block shows a Turkish role label, never the raw enum
+  describe('role label in the sidebar', () => {
+    it('shows "Çalışan" instead of the raw "EMPLOYEE" enum', () => {
+      renderShell({ ...fakeUser, role: 'EMPLOYEE' })
+
+      expect(screen.getByText('Çalışan')).toBeInTheDocument()
+      expect(screen.queryByText('EMPLOYEE')).not.toBeInTheDocument()
+    })
+
+    it('shows "Departman Yetkilisi" instead of the raw "DEPARTMENT_AUTHORITY" enum', () => {
+      renderShell({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
+
+      expect(screen.getByText('Departman Yetkilisi')).toBeInTheDocument()
+      expect(screen.queryByText('DEPARTMENT_AUTHORITY')).not.toBeInTheDocument()
+    })
+
+    it('shows "Yönetici" instead of the raw "ADMIN" enum', () => {
+      renderShell({ ...fakeUser, role: 'ADMIN' })
+
+      expect(screen.getByText('Yönetici')).toBeInTheDocument()
+      expect(screen.queryByText('ADMIN')).not.toBeInTheDocument()
+    })
+  })
+
+  // AC11: the sidebar user block shows an initials avatar derived from name/surname
+  describe('initials avatar in the sidebar', () => {
+    it('renders both initials for a user with a name and a surname', () => {
+      renderShell({
+        ...fakeUser,
+        name: 'IT',
+        surname: 'Yetkilisi',
+        role: 'DEPARTMENT_AUTHORITY',
+        department_id: 'dept-1',
+      })
+
+      expect(screen.getByText('IY')).toBeInTheDocument()
+    })
+
+    it('renders only the first initial for a user with no surname', () => {
+      renderShell({ ...fakeUser, role: 'EMPLOYEE' })
+
+      expect(screen.getByText('T')).toBeInTheDocument()
     })
   })
 })

@@ -1,7 +1,8 @@
+import { PackageOpen } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Table,
   TableBody,
@@ -19,10 +20,9 @@ export default function Requests() {
   const { data, isPending, isError, error, refetch } = useRequests()
 
   return (
-    <Card className="w-full max-w-4xl">
-        <CardHeader>
-          <CardTitle className="text-2xl">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</CardTitle>
-        </CardHeader>
+    <div className="flex flex-col gap-4">
+      <h1 className="text-2xl font-semibold">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</h1>
+      <Card className="w-full">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
 
@@ -38,7 +38,10 @@ export default function Requests() {
           )}
 
           {!isPending && !isError && data && data.length === 0 && (
-            <p className="text-muted-foreground">Henüz talep yok</p>
+            <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+              <PackageOpen className="size-10" />
+              <p>Henüz talep yok</p>
+            </div>
           )}
 
           {!isPending && !isError && data && data.length > 0 && (
@@ -88,6 +91,7 @@ export default function Requests() {
             </Table>
           )}
         </CardContent>
-    </Card>
+      </Card>
+    </div>
   )
 }
