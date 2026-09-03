@@ -12,3 +12,7 @@ build/
 
 # Playwright MCP live-verification output (snapshots/console logs)
 /.playwright-mcp/
+
+# ATDD pipeline task artifacts (atdd/plan/code_diff/verify_report/red_team) —
+# local working docs, not pushed going forward.
+/artifacts/

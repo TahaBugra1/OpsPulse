@@ -9,6 +9,8 @@ import { setUnauthorizedHandler } from '@/lib/api'
 import Home from '@/pages/Home'
 import Login from '@/pages/Login'
 import NotFound from '@/pages/NotFound'
+import RequestDetail from '@/pages/RequestDetail'
+import Requests from '@/pages/Requests'
 
 const queryClient = new QueryClient()
 
@@ -36,6 +38,8 @@ function App() {
             <Routes>
               <Route element={<ProtectedRoute />}>
                 <Route path="/" element={<Home />} />
+                <Route path="/requests" element={<Requests />} />
+                <Route path="/requests/:id" element={<RequestDetail />} />
               </Route>
               <Route element={<GuestOnlyRoute />}>
                 <Route path="/login" element={<Login />} />
