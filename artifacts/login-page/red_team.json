@@ -1,0 +1,57 @@
+{
+  "task": "login-page",
+  "reviewed_at": "2026-09-03T00:00:00+03:00",
+  "summary": "Implementasyon atdd.md'nin 11 Acceptance Criteria'sının (+1 retroaktif AC12) tamamını doğru şekilde karşılıyor, testler (12/12) gerçek davranışı (mock'lanmış fetch üzerinden) doğruluyor, build/lint/security taraması temiz. İlk incelemede bulunan iki bulgu ele alındı: coverage aracı eklenip ölçüldü (bu görevin kendi teslim dosyaları %100), scope farkı atdd.md'ye retroaktif AC olarak kaydedildi. Commit'i engelleyen bir şey yok.",
+  "findings": [
+    {
+      "severity": "medium",
+      "category": "correctness",
+      "file": "artifacts/login-page/verify_report.md",
+      "issue": "[ÇÖZÜLDÜ] atdd.md'nin `coverage_target: 80` hedefi ilk red-team taramasında hiç ölçülmemişti. Follow-up: `@vitest/coverage-v8@^4.1.11` eklendi, `npm run test:coverage` bağımsız olarak çalıştırılıp doğrulandı. Sonuç: proje geneli Statements 79.1%/Branches 77.19%/Functions 68.62%/Lines 80.31% (bu görevin kapsamı dışındaki scaffold dosyaları — card.tsx/field.tsx/separator.tsx/AuthContext.tsx/authStorage.ts — tarafından aşağı çekiliyor); bu görevin gerçek teslim dosyaları `Login.tsx` (32/32 statement) ve `validation.ts` (1/1) %100 kapsanıyor.",
+      "better_approach": "Uygulandı — bkz. verify_report.md gate 5.",
+      "reason": "atdd skill'inin kendi kuralı: benchmark 'ölçülebilir' olmalı. Artık gerçek bir yüzdeyle destekleniyor, icat edilmiş değil.",
+      "outcome": "fixed"
+    },
+    {
+      "severity": "low",
+      "category": "scope",
+      "file": "frontend/src/pages/Login.tsx",
+      "issue": "[ÇÖZÜLDÜ] `handleGoogleError()` ve ona ait test, ilk atdd.md'nin 11 AC'sinde açıkça yer almıyordu.",
+      "better_approach": "Uygulandı — atdd.md'ye 'Ek Not' bölümü ve retroaktif AC12 olarak eklendi (bkz. atdd.md § Ek Not), kod/test tarafında bir değişiklik gerekmiyordu (davranış zaten doğruydu, sadece spesifikasyonda kayıtsızdı).",
+      "reason": "red-team'in Scope Review kuralı gereği raporlandı; artık atdd.md ile kod arasında kayıtsız bir fark kalmadı.",
+      "outcome": "fixed"
+    }
+  ],
+  "strengths": [
+    "11/11 Acceptance Criteria birebir karşılanıyor, testler gerçek davranışı (mock'lanmış global `fetch`, gerçek `AuthProvider`/`MemoryRouter`) doğruluyor — sahte/yüzeysel assertion yok.",
+    "AC3'ün en kritik detayı (429 yanıtının JSON olmayabileceği, ham mesaja güvenilmemesi gerektiği) hem kodda (`err.status === 429` özel dalı) hem testte (`nonJsonResponse` ile simüle edilerek) doğru şekilde ele alınmış.",
+    "rememberMe→storage ayrımı (AC9/10) gerçek `sessionStorage`/`localStorage` API'leri üzerinden test edilmiş, mock'lanmamış — davranış gerçekten kanıtlanmış.",
+    "code-copilot aşamasında bulunan gerçek bir build hatası (vitest/vite peer-conflict) ve test-copilot aşamasında bulunan gerçek bir tsc hatası (`TS2352`), her ikisi de subagent'a geri gönderilip düzeltilmiş ve bağımsız olarak yeniden doğrulanmış — 'asla ilk raporu es geçme' disiplini boyunca uygulanmış.",
+    "CAVEMAN: gereksiz dosya/soyutlama/helper yok; `field.tsx`/`separator.tsx` deviation'ı ve vitest version bump'ı, ikisi de gerçek teknik zorunluluklardan kaynaklanıyor ve code_diff.md'de dürüstçe raporlanmış."
+  ],
+  "risks": [
+    "plan.md'nin kendi flagged riski (GoogleOAuthProvider'ın `clientId` prop'u, gerçek bir `.env` henüz mevcut olmadığı için şu an `undefined` — kütüphanenin bunu crash etmeden yutup yutmadığı) hiçbir yerde bağımsız olarak çalıştırılarak doğrulanmadı; Login.test.tsx `@react-oauth/google`'ı tamamen mock'ladığı için bu senaryoyu hiç egzersiz etmiyor, `npm run build` de yalnızca statik derleme yapıyor, runtime'ı çalıştırmıyor. Planlanan Playwright MCP canlı doğrulaması (atdd.md Q12) bunu commit'ten önce kanıtlamalı — henüz yapılmadı.",
+    "Gerçek Google OAuth consent akışı (AC4/5'in Google tarafı) bu ortamda hiç uçtan uca test edilemiyor (gerçek Client ID yok) — atdd.md bunu zaten bilinen bir sınırlama olarak kabul etmiş, tekrar not ediliyor."
+  ],
+  "caveman_review": {
+    "complexity": "low",
+    "unnecessary_files": 0,
+    "unnecessary_helpers": 0,
+    "unnecessary_abstractions": 0
+  },
+  "scope_review": {
+    "matches_atdd": true,
+    "scope_expansion": false
+  },
+  "ready_to_commit": {
+    "atdd_satisfied": true,
+    "tests_passed": true,
+    "no_critical_findings": true,
+    "scope_respected": true,
+    "caveman_satisfied": true,
+    "security_acceptable": true,
+    "maintainability_acceptable": true,
+    "no_blocking_risks": true
+  },
+  "verdict": "approve"
+}
