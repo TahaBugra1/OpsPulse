@@ -34,6 +34,7 @@ function renderShell(user: AuthUser, initialPath = '/requests') {
             <Route path="/requests" element={<div>REQUESTS PAGE</div>} />
             <Route path="/queue" element={<div>QUEUE PAGE</div>} />
             <Route path="/admin/users" element={<div>USERS PAGE</div>} />
+            <Route path="/profile" element={<div>PROFILE PAGE</div>} />
             <Route path="/boom" element={<Bomb />} />
           </Route>
         </Routes>
@@ -103,6 +104,16 @@ describe('AppShell', () => {
   it('renders ComingSoon-style content for /queue without crashing', () => {
     renderShell({ ...fakeUser, role: 'ADMIN' }, '/queue')
     expect(screen.getByText('QUEUE PAGE')).toBeInTheDocument()
+  })
+
+  // AC1: the sidebar's user block is a link to /profile, not just decorative text
+  it('navigates to /profile when the user block is clicked', async () => {
+    const user = userEvent.setup()
+    renderShell({ ...fakeUser, role: 'EMPLOYEE' }, '/requests')
+
+    await user.click(screen.getByRole('link', { name: /Taha/ }))
+
+    expect(screen.getByText('PROFILE PAGE')).toBeInTheDocument()
   })
 
   // AC7: active nav link is visually marked (checked as a standalone class token, since

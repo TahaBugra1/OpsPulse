@@ -44,6 +44,13 @@ export function setStoredSession(token: string, user: AuthUser, rememberMe: bool
   other.removeItem(USER_KEY)
 }
 
+/** Persists an updated user into whichever storage currently holds the token,
+ *  preserving the original rememberMe choice. */
+export function setStoredUser(user: AuthUser): void {
+  const target = sessionStorage.getItem(TOKEN_KEY) !== null ? sessionStorage : localStorage
+  target.setItem(USER_KEY, JSON.stringify(user))
+}
+
 /** Clears the session from both storages. */
 export function clearStoredSession(): void {
   sessionStorage.removeItem(TOKEN_KEY)

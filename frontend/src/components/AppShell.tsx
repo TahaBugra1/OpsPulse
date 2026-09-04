@@ -1,9 +1,10 @@
 import { Activity, ClipboardList, Inbox, LogOut, Users, type LucideIcon } from 'lucide-react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/context/AuthContext'
+import { ROLE_LABELS } from '@/lib/users'
 import { cn } from '@/lib/utils'
 
 const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: LucideIcon }[]> = {
@@ -19,12 +20,6 @@ const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: Lucid
     { to: '/queue', label: 'Kuyruk', icon: Inbox },
     { to: '/admin/users', label: 'Kullanıcılar', icon: Users },
   ],
-}
-
-const ROLE_LABELS: Record<string, string> = {
-  EMPLOYEE: 'Çalışan',
-  DEPARTMENT_AUTHORITY: 'Departman Yetkilisi',
-  ADMIN: 'Yönetici',
 }
 
 // DEPARTMENT_AUTHORITY's real target would be /queue, but Kuyruk is still a
@@ -72,7 +67,7 @@ export function AppShell() {
 
         <div className="flex flex-col gap-3">
           <Separator className="bg-sidebar-border" />
-          <div className="flex items-center gap-3 px-3">
+          <Link to="/profile" className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-sidebar-accent">
             <div
               aria-hidden="true"
               className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-medium text-sidebar-primary-foreground"
@@ -87,7 +82,7 @@ export function AppShell() {
                 {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
               </span>
             </div>
-          </div>
+          </Link>
           <Button type="button" variant="outline" onClick={logout}>
             <LogOut className="size-4" />
             Çıkış Yap
