@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('./db');
 const { verifyGoogleToken } = require('./googleAuth');
+const { normalizeName, normalizeSurname } = require('./validation');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -57,6 +58,16 @@ async function register({ name, surname, email, password }) {
     fail(400, 'Şifre en az 8 karakter olmalı');
   }
 
+  const normalizedName = normalizeName(name);
+  if (!normalizedName.ok) {
+    fail(400, 'Ad zorunlu ve en fazla 150 karakter olabilir');
+  }
+
+  const normalizedSurname = normalizeSurname(surname);
+  if (!normalizedSurname.ok) {
+    fail(400, 'Soyad en fazla 150 karakter olabilir');
+  }
+
   const passwordHash = await bcrypt.hash(password, 10);
 
   let result;
@@ -65,7 +76,7 @@ async function register({ name, surname, email, password }) {
       `INSERT INTO users (name, surname, email, password_hash, role)
        VALUES ($1, $2, $3, $4, 'EMPLOYEE')
        RETURNING id, name, surname, email, role, department_id`,
-      [name, surname || null, email, passwordHash]
+      [normalizedName.value, normalizedSurname.value, email, passwordHash]
     );
   } catch (dbErr) {
     if (dbErr.code === '23505') {
