@@ -1,7 +1,13 @@
-import { Activity, ClipboardList, Inbox, LogOut, Users, type LucideIcon } from 'lucide-react'
-import { Link, NavLink, Outlet } from 'react-router-dom'
+import { Activity, ClipboardList, Inbox, LogOut, User, Users, type LucideIcon } from 'lucide-react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
-import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/context/AuthContext'
 import { ROLE_LABELS } from '@/lib/users'
@@ -32,6 +38,7 @@ export function getLandingPath(_role: string): string {
 
 export function AppShell() {
   const { user, logout } = useAuth()
+  const navigate = useNavigate()
   const navItems = user ? (NAV_ITEMS_BY_ROLE[user.role] ?? []) : []
   const initials = user ? `${user.name.charAt(0)}${user.surname?.charAt(0) ?? ''}`.toUpperCase() : ''
 
@@ -67,26 +74,37 @@ export function AppShell() {
 
         <div className="flex flex-col gap-3">
           <Separator className="bg-sidebar-border" />
-          <Link to="/profile" className="flex items-center gap-3 rounded-md px-3 py-2 hover:bg-sidebar-accent">
-            <div
-              aria-hidden="true"
-              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-medium text-sidebar-primary-foreground"
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left outline-none hover:bg-sidebar-accent data-popup-open:bg-sidebar-accent"
             >
-              {initials}
-            </div>
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-sm font-medium text-sidebar-foreground">
-                {user?.name} {user?.surname ?? ''}
-              </span>
-              <span className="truncate text-xs text-sidebar-foreground/60">
-                {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
-              </span>
-            </div>
-          </Link>
-          <Button type="button" variant="outline" onClick={logout}>
-            <LogOut className="size-4" />
-            Çıkış Yap
-          </Button>
+              <div
+                aria-hidden="true"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-medium text-sidebar-primary-foreground"
+              >
+                {initials}
+              </div>
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-medium text-sidebar-foreground">
+                  {user?.name} {user?.surname ?? ''}
+                </span>
+                <span className="truncate text-xs text-sidebar-foreground/60">
+                  {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
+                </span>
+              </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-56">
+              <DropdownMenuItem onClick={() => navigate('/profile')}>
+                <User className="size-4" />
+                Profilim
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onClick={logout}>
+                <LogOut className="size-4" />
+                Çıkış Yap
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </aside>
 
