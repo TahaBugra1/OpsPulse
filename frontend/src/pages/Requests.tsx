@@ -21,7 +21,14 @@ export default function Requests() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</h1>
+        {user!.role !== 'ADMIN' && (
+          <Button type="button" onClick={() => navigate('/requests/new')}>
+            Yeni Talep
+          </Button>
+        )}
+      </div>
       <Card className="w-full">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}

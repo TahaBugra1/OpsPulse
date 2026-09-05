@@ -506,6 +506,18 @@ async function listComments(requestId, user) {
   return result.rows;
 }
 
+async function listRequestTypes() {
+  let result;
+  try {
+    result = await pool.query(
+      'SELECT id, name, department_id FROM request_types WHERE is_active = true ORDER BY name ASC'
+    );
+  } catch (dbErr) {
+    fail(500, 'Talep türleri getirilemedi, lütfen tekrar deneyin');
+  }
+  return result.rows;
+}
+
 module.exports = {
   createRequest,
   claimRequest,
@@ -515,4 +527,5 @@ module.exports = {
   getRequestById,
   addComment,
   listComments,
+  listRequestTypes,
 };

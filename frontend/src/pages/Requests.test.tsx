@@ -233,4 +233,20 @@ describe('Requests page', () => {
       expect(screen.getByRole('heading', { name: 'Taleplerim' })).toBeInTheDocument(),
     )
   })
+
+  // AC1: EMPLOYEE (and DEPARTMENT_AUTHORITY) users see a "Yeni Talep" button
+  it('shows a "Yeni Talep" button for an EMPLOYEE user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
+    await waitFor(() => expect(screen.getByText('Henüz talep yok')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Yeni Talep' })).toBeInTheDocument()
+  })
+
+  // AC1: ADMIN users never create requests, so no "Yeni Talep" button for them
+  it('does not show a "Yeni Talep" button for an ADMIN user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+    renderRequests({ ...fakeUser, role: 'ADMIN' })
+    await waitFor(() => expect(screen.getByText('Henüz talep yok')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Yeni Talep' })).not.toBeInTheDocument()
+  })
 })

@@ -13,3 +13,12 @@ export const profileSchema = z.object({
 })
 
 export type ProfileFormValues = z.infer<typeof profileSchema>
+
+export const requestSchema = z.object({
+  title: z.string().trim().min(3, 'Başlık en az 3 karakter olmalı').max(200, 'Başlık en fazla 200 karakter olabilir'),
+  description: z.string().trim().min(1, 'Açıklama zorunlu'),
+  request_type_id: z.string().min(1, 'Talep türü seçilmeli'),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+})
+
+export type RequestFormValues = z.infer<typeof requestSchema>

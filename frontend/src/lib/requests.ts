@@ -1,8 +1,8 @@
-// Read-only request list/detail data layer: types, Turkish label mappings,
-// and TanStack Query hooks. No mutations here — this feature is view-only.
+// Request list/detail data layer: types, Turkish label mappings, and
+// TanStack Query hooks (reads plus the request-creation mutation).
 
-import { useQuery } from '@tanstack/react-query'
-import { apiGet } from './api'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { apiGet, apiPost } from './api'
 
 export interface RequestListItem {
   id: string
@@ -23,6 +23,12 @@ export interface RequestListItem {
   department_name: string
   created_by_name: string
   assigned_to_name: string | null
+}
+
+export interface RequestType {
+  id: string
+  name: string
+  department_id: string
 }
 
 export interface RequestComment {
@@ -74,5 +80,21 @@ export function useRequestComments(id: string) {
     queryKey: ['requests', id, 'comments'],
     queryFn: () => apiGet<RequestComment[]>(`/api/requests/${id}/comments`),
     enabled: !!id,
+  })
+}
+
+export function useRequestTypes() {
+  return useQuery({
+    queryKey: ['request-types'],
+    queryFn: () => apiGet<RequestType[]>('/api/request-types'),
+  })
+}
+
+export function useCreateRequest() {
+  // The real POST response is the raw `requests` row (RETURNING *), narrower
+  // than RequestListItem (no *_name/is_overdue fields) — only `id` is relied on.
+  return useMutation({
+    mutationFn: (body: { title: string; description: string; request_type_id: string; priority: 'LOW' | 'MEDIUM' | 'HIGH' }) =>
+      apiPost<RequestListItem>('/api/requests', body),
   })
 }
