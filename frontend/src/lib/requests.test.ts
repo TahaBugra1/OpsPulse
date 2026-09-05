@@ -1,8 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook, waitFor } from '@testing-library/react'
+import { renderHook, waitFor, act } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PRIORITY_LABELS, STATUS_LABELS, useRequest, useRequestComments, useRequests } from './requests'
+import {
+  PRIORITY_LABELS,
+  STATUS_LABELS,
+  useAddComment,
+  useChangePriority,
+  useChangeRequestStatus,
+  useClaimRequest,
+  useCreateRequest,
+  useRequest,
+  useRequestComments,
+  useRequests,
+  useRequestTypes,
+} from './requests'
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -103,5 +115,123 @@ describe('requests lib', () => {
       MEDIUM: 'Orta',
       HIGH: 'Yüksek',
     })
+  })
+
+  // AC2: useRequestTypes() calls GET /api/request-types and returns the array
+  it('useRequestTypes calls GET /api/request-types and returns the list', async () => {
+    const types = [{ id: 'type-1', name: 'Donanım Arızası', department_id: 'dept-1' }]
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, types))
+
+    const { result } = renderHook(() => useRequestTypes(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(types)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types')
+    expect(options?.method).toBe('GET')
+  })
+
+  // AC3: useCreateRequest()'s mutate calls POST /api/requests with the given body and resolves with the response
+  it('useCreateRequest calls POST /api/requests with the given body and resolves with the response', async () => {
+    const created = { id: 'req-1', request_number: 99 }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(201, created))
+
+    const { result } = renderHook(() => useCreateRequest(), { wrapper: wrapper() })
+
+    const body = {
+      title: 'Yazıcı bozuldu',
+      description: 'Ofis yazıcısı çalışmıyor',
+      request_type_id: 'type-1',
+      priority: 'HIGH' as const,
+    }
+
+    act(() => {
+      result.current.mutate(body)
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(created)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(options?.body as string)).toEqual(body)
+  })
+
+  // useClaimRequest(id)'s mutate calls POST /api/requests/:id/assign with no body
+  it('useClaimRequest calls POST /api/requests/:id/assign with no body', async () => {
+    const updated = { id: 'r1', status: 'ASSIGNED' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useClaimRequest('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate()
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/assign')
+    expect(options?.method).toBe('POST')
+    expect(options?.body).toBeUndefined()
+  })
+
+  // useChangeRequestStatus(id)'s mutate calls PATCH /api/requests/:id/status with the given body
+  it('useChangeRequestStatus calls PATCH /api/requests/:id/status with the given body', async () => {
+    const updated = { id: 'r1', status: 'COMPLETED' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useChangeRequestStatus('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ status: 'COMPLETED' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/status')
+    expect(options?.method).toBe('PATCH')
+    expect(JSON.parse(options?.body as string)).toEqual({ status: 'COMPLETED' })
+  })
+
+  // useChangePriority(id)'s mutate calls PATCH /api/requests/:id/priority with the given body
+  it('useChangePriority calls PATCH /api/requests/:id/priority with the given body', async () => {
+    const updated = { id: 'r1', priority: 'HIGH' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useChangePriority('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ priority: 'HIGH' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/priority')
+    expect(options?.method).toBe('PATCH')
+    expect(JSON.parse(options?.body as string)).toEqual({ priority: 'HIGH' })
+  })
+
+  // useAddComment(id)'s mutate calls POST /api/requests/:id/comments with the given body
+  it('useAddComment calls POST /api/requests/:id/comments with the given body', async () => {
+    const created = { id: 'c1', content: 'test' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(201, created))
+
+    const { result } = renderHook(() => useAddComment('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ content: 'test' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/comments')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(options?.body as string)).toEqual({ content: 'test' })
   })
 })

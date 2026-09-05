@@ -5,12 +5,14 @@ import {
   getStoredToken,
   getStoredUser,
   setStoredSession,
+  setStoredUser,
 } from '@/lib/authStorage'
 
 interface AuthContextValue {
   user: AuthUser | null
   token: string | null
   login: (token: string, user: AuthUser, rememberMe: boolean) => void
+  updateUser: (user: AuthUser) => void
   logout: () => void
 }
 
@@ -27,6 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login: (nextToken, nextUser, rememberMe) => {
         setStoredSession(nextToken, nextUser, rememberMe)
         setToken(nextToken)
+        setUser(nextUser)
+      },
+      updateUser: (nextUser) => {
+        setStoredUser(nextUser)
         setUser(nextUser)
       },
       logout: () => {

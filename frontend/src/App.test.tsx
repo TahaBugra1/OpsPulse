@@ -71,7 +71,9 @@ describe('App routing', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
-    expect(screen.getByText('Çıkış Yap')).toBeInTheDocument()
+    // Logout now lives inside the sidebar user menu (trigger button), not as
+    // standalone visible text — assert the trigger renders instead.
+    expect(screen.getByRole('button', { name: /Taha/ })).toBeInTheDocument()
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
   })
 

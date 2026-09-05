@@ -1,8 +1,9 @@
-// Read-only request list/detail data layer: types, Turkish label mappings,
-// and TanStack Query hooks. No mutations here — this feature is view-only.
+// Request list/detail data layer: types, Turkish label mappings, and
+// TanStack Query hooks (reads plus the request creation/claim/status/
+// priority/comment mutations).
 
-import { useQuery } from '@tanstack/react-query'
-import { apiGet } from './api'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { apiGet, apiPatch, apiPost } from './api'
 
 export interface RequestListItem {
   id: string
@@ -23,6 +24,12 @@ export interface RequestListItem {
   department_name: string
   created_by_name: string
   assigned_to_name: string | null
+}
+
+export interface RequestType {
+  id: string
+  name: string
+  department_id: string
 }
 
 export interface RequestComment {
@@ -74,5 +81,50 @@ export function useRequestComments(id: string) {
     queryKey: ['requests', id, 'comments'],
     queryFn: () => apiGet<RequestComment[]>(`/api/requests/${id}/comments`),
     enabled: !!id,
+  })
+}
+
+export function useRequestTypes() {
+  return useQuery({
+    queryKey: ['request-types'],
+    queryFn: () => apiGet<RequestType[]>('/api/request-types'),
+  })
+}
+
+export function useCreateRequest() {
+  // The real POST response is the raw `requests` row (RETURNING *), narrower
+  // than RequestListItem (no *_name/is_overdue fields) — only `id` is relied on.
+  return useMutation({
+    mutationFn: (body: { title: string; description: string; request_type_id: string; priority: 'LOW' | 'MEDIUM' | 'HIGH' }) =>
+      apiPost<RequestListItem>('/api/requests', body),
+  })
+}
+
+// The four mutations below all return raw DB rows (RETURNING *) without the
+// JOIN-derived display fields (*_name, is_overdue, author_name), so nothing
+// reads their response — the caller invalidates and refetches the enriched
+// GET instead of writing the response into the cache with setQueryData.
+
+export function useClaimRequest(id: string) {
+  return useMutation({ mutationFn: () => apiPost<unknown>(`/api/requests/${id}/assign`) })
+}
+
+export function useChangeRequestStatus(id: string) {
+  return useMutation({
+    mutationFn: (body: { status: 'IN_PROGRESS' | 'COMPLETED' | 'REJECTED'; note?: string }) =>
+      apiPatch<unknown>(`/api/requests/${id}/status`, body),
+  })
+}
+
+export function useChangePriority(id: string) {
+  return useMutation({
+    mutationFn: (body: { priority: 'LOW' | 'MEDIUM' | 'HIGH' }) =>
+      apiPatch<unknown>(`/api/requests/${id}/priority`, body),
+  })
+}
+
+export function useAddComment(id: string) {
+  return useMutation({
+    mutationFn: (body: { content: string }) => apiPost<unknown>(`/api/requests/${id}/comments`, body),
   })
 }
