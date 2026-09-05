@@ -1,8 +1,9 @@
 // Request list/detail data layer: types, Turkish label mappings, and
-// TanStack Query hooks (reads plus the request-creation mutation).
+// TanStack Query hooks (reads plus the request creation/claim/status/
+// priority/comment mutations).
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { apiGet, apiPost } from './api'
+import { apiGet, apiPatch, apiPost } from './api'
 
 export interface RequestListItem {
   id: string
@@ -96,5 +97,34 @@ export function useCreateRequest() {
   return useMutation({
     mutationFn: (body: { title: string; description: string; request_type_id: string; priority: 'LOW' | 'MEDIUM' | 'HIGH' }) =>
       apiPost<RequestListItem>('/api/requests', body),
+  })
+}
+
+// The four mutations below all return raw DB rows (RETURNING *) without the
+// JOIN-derived display fields (*_name, is_overdue, author_name), so nothing
+// reads their response — the caller invalidates and refetches the enriched
+// GET instead of writing the response into the cache with setQueryData.
+
+export function useClaimRequest(id: string) {
+  return useMutation({ mutationFn: () => apiPost<unknown>(`/api/requests/${id}/assign`) })
+}
+
+export function useChangeRequestStatus(id: string) {
+  return useMutation({
+    mutationFn: (body: { status: 'IN_PROGRESS' | 'COMPLETED' | 'REJECTED'; note?: string }) =>
+      apiPatch<unknown>(`/api/requests/${id}/status`, body),
+  })
+}
+
+export function useChangePriority(id: string) {
+  return useMutation({
+    mutationFn: (body: { priority: 'LOW' | 'MEDIUM' | 'HIGH' }) =>
+      apiPatch<unknown>(`/api/requests/${id}/priority`, body),
+  })
+}
+
+export function useAddComment(id: string) {
+  return useMutation({
+    mutationFn: (body: { content: string }) => apiPost<unknown>(`/api/requests/${id}/comments`, body),
   })
 }

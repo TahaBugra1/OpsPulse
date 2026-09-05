@@ -22,3 +22,15 @@ export const requestSchema = z.object({
 })
 
 export type RequestFormValues = z.infer<typeof requestSchema>
+
+export const rejectNoteSchema = z.object({
+  note: z.string().trim().min(1, 'Red sebebi zorunlu'),
+})
+
+export type RejectNoteFormValues = z.infer<typeof rejectNoteSchema>
+
+export const commentSchema = z.object({
+  content: z.string().trim().min(1, 'Yorum boş olamaz').max(2000, 'Yorum en fazla 2000 karakter olabilir'),
+})
+
+export type CommentFormValues = z.infer<typeof commentSchema>

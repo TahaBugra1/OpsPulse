@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   PRIORITY_LABELS,
   STATUS_LABELS,
+  useAddComment,
+  useChangePriority,
+  useChangeRequestStatus,
+  useClaimRequest,
   useCreateRequest,
   useRequest,
   useRequestComments,
@@ -153,5 +157,81 @@ describe('requests lib', () => {
     expect(String(url)).toContain('/api/requests')
     expect(options?.method).toBe('POST')
     expect(JSON.parse(options?.body as string)).toEqual(body)
+  })
+
+  // useClaimRequest(id)'s mutate calls POST /api/requests/:id/assign with no body
+  it('useClaimRequest calls POST /api/requests/:id/assign with no body', async () => {
+    const updated = { id: 'r1', status: 'ASSIGNED' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useClaimRequest('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate()
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/assign')
+    expect(options?.method).toBe('POST')
+    expect(options?.body).toBeUndefined()
+  })
+
+  // useChangeRequestStatus(id)'s mutate calls PATCH /api/requests/:id/status with the given body
+  it('useChangeRequestStatus calls PATCH /api/requests/:id/status with the given body', async () => {
+    const updated = { id: 'r1', status: 'COMPLETED' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useChangeRequestStatus('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ status: 'COMPLETED' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/status')
+    expect(options?.method).toBe('PATCH')
+    expect(JSON.parse(options?.body as string)).toEqual({ status: 'COMPLETED' })
+  })
+
+  // useChangePriority(id)'s mutate calls PATCH /api/requests/:id/priority with the given body
+  it('useChangePriority calls PATCH /api/requests/:id/priority with the given body', async () => {
+    const updated = { id: 'r1', priority: 'HIGH' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useChangePriority('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ priority: 'HIGH' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/priority')
+    expect(options?.method).toBe('PATCH')
+    expect(JSON.parse(options?.body as string)).toEqual({ priority: 'HIGH' })
+  })
+
+  // useAddComment(id)'s mutate calls POST /api/requests/:id/comments with the given body
+  it('useAddComment calls POST /api/requests/:id/comments with the given body', async () => {
+    const created = { id: 'c1', content: 'test' }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(201, created))
+
+    const { result } = renderHook(() => useAddComment('r1'), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ content: 'test' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests/r1/comments')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(options?.body as string)).toEqual({ content: 'test' })
   })
 })
