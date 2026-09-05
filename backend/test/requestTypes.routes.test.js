@@ -29,7 +29,6 @@ async function deleteUser(userId) {
 }
 
 let itAuthorityToken;
-let leaveRequestTypeId; // HR, used as a throwaway to flip is_active off/on
 
 test.before(async () => {
   const itLogin = await request(app)
@@ -37,9 +36,6 @@ test.before(async () => {
     .send({ email: 'it.authority@opspulse.com', password: 'sifre1234' });
   assert.equal(itLogin.status, 200, `IT authority login failed: ${JSON.stringify(itLogin.body)}`);
   itAuthorityToken = itLogin.body.token;
-
-  const lrType = await pool.query("SELECT id FROM request_types WHERE name = 'Leave Request'");
-  leaveRequestTypeId = lrType.rows[0].id;
 });
 
 test.after(async () => {
@@ -86,10 +82,17 @@ test('GET /api/request-types - authenticated DEPARTMENT_AUTHORITY also gets 200'
 
 // AC2: an is_active = false request type does NOT appear in the response
 test('GET /api/request-types - an inactive request type is excluded from the response', async (t) => {
+  const dept = await pool.query('SELECT id FROM departments LIMIT 1');
+  const insertResult = await pool.query(
+    `INSERT INTO request_types (name, department_id, is_active)
+     VALUES ($1, $2, false)
+     RETURNING id`,
+    [`Throwaway Inactive Type ${randomUUID()}`, dept.rows[0].id],
+  );
+  const inactiveTypeId = insertResult.rows[0].id;
   t.after(async () => {
-    await pool.query('UPDATE request_types SET is_active = true WHERE id = $1', [leaveRequestTypeId]);
+    await pool.query('DELETE FROM request_types WHERE id = $1', [inactiveTypeId]);
   });
-  await pool.query('UPDATE request_types SET is_active = false WHERE id = $1', [leaveRequestTypeId]);
 
   const res = await request(app)
     .get('/api/request-types')
@@ -97,7 +100,7 @@ test('GET /api/request-types - an inactive request type is excluded from the res
 
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const ids = res.body.map((rt) => rt.id);
-  assert.ok(!ids.includes(leaveRequestTypeId));
+  assert.ok(!ids.includes(inactiveTypeId));
 });
 
 // Nice-to-have: response is ordered by name ASC
