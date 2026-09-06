@@ -13,6 +13,7 @@ const requestsRoutes = require('./routes/requests.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const usersRoutes = require('./routes/users.routes');
 const requestTypesRoutes = require('./routes/requestTypes.routes');
+const notificationsRoutes = require('./routes/notifications.routes');
 const authMiddleware = require('./middleware/auth.middleware');
 const errorHandler = require('./middleware/errorHandler');
 const attachSockets = require('./sockets');
@@ -37,6 +38,7 @@ app.use('/api/requests', authMiddleware, requestsRoutes);
 app.use('/api/analytics', authMiddleware, analyticsRoutes);
 app.use('/api/users', authMiddleware, usersRoutes);
 app.use('/api/request-types', authMiddleware, requestTypesRoutes);
+app.use('/api/notifications', authMiddleware, notificationsRoutes);
 
 app.use(errorHandler);
 

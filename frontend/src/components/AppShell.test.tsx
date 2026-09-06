@@ -1,10 +1,65 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from './AppShell'
 import { AuthProvider } from '@/context/AuthContext'
+import { SocketProvider } from '@/context/SocketContext'
 import type { AuthUser } from '@/lib/authStorage'
+import type { AppNotification } from '@/lib/notifications'
+
+// Real socket.io-client is mocked so no actual WebSocket connection is
+// attempted in jsdom — SocketProvider calls createSocket()/io() for real
+// whenever a token is present. Same shape as RequestDetail.test.tsx.
+const { mockSocket, mockIo } = vi.hoisted(() => {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
+  const mockSocket = {
+    emit: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      if (!listeners.has(event)) listeners.set(event, new Set())
+      listeners.get(event)!.add(handler)
+    }),
+    off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      listeners.get(event)?.delete(handler)
+    }),
+    disconnect: vi.fn(),
+    // Test helper: simulates the server (or the socket itself, for 'connect')
+    // firing an event to every listener currently registered for it.
+    __emit: (event: string, payload?: unknown) => {
+      listeners.get(event)?.forEach((handler) => handler(payload))
+    },
+    __listeners: listeners,
+  }
+  const mockIo = vi.fn(() => mockSocket)
+  return { mockSocket, mockIo }
+})
+
+vi.mock('socket.io-client', () => ({ io: mockIo }))
+
+function jsonResponse(status: number, body: unknown) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null),
+    },
+    json: async () => body,
+  } as unknown as Response
+}
+
+function makeNotification(overrides: Partial<AppNotification> = {}): AppNotification {
+  return {
+    id: 'n1',
+    user_id: 'user-1',
+    request_id: 'req-1',
+    type: 'REQUEST_ASSIGNED',
+    message: 'Talebiniz üstlenildi',
+    read_at: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
 
 const fakeUser: AuthUser = {
   id: 'user-1',
@@ -66,20 +121,26 @@ async function openUserMenu(user: ReturnType<typeof userEvent.setup>, trigger: H
 
 function renderShell(user: AuthUser, initialPath = '/requests') {
   seedSession(user)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <AuthProvider>
-      <MemoryRouter initialEntries={[initialPath]}>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route path="/requests" element={<div>REQUESTS PAGE</div>} />
-            <Route path="/queue" element={<div>QUEUE PAGE</div>} />
-            <Route path="/admin/users" element={<div>USERS PAGE</div>} />
-            <Route path="/profile" element={<div>PROFILE PAGE</div>} />
-            <Route path="/boom" element={<Bomb />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </AuthProvider>,
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <SocketProvider>
+          <MemoryRouter initialEntries={[initialPath]}>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="/requests" element={<div>REQUESTS PAGE</div>} />
+                <Route path="/requests/:id" element={<div>REQUEST DETAIL PAGE</div>} />
+                <Route path="/queue" element={<div>QUEUE PAGE</div>} />
+                <Route path="/admin/users" element={<div>USERS PAGE</div>} />
+                <Route path="/profile" element={<div>PROFILE PAGE</div>} />
+                <Route path="/boom" element={<Bomb />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </SocketProvider>
+      </AuthProvider>
+    </QueryClientProvider>,
   )
 }
 
@@ -87,9 +148,21 @@ describe('AppShell', () => {
   beforeEach(() => {
     sessionStorage.clear()
     localStorage.clear()
+    // Default: every pre-existing test only relies on the unread-count query
+    // (the notification list is fetched only once the bell dropdown opens,
+    // which none of the pre-existing tests do) - a single resolved
+    // { count: 0 } response is enough to keep AppShell from hanging.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, { count: 0 })))
+    mockSocket.emit.mockClear()
+    mockSocket.on.mockClear()
+    mockSocket.off.mockClear()
+    mockSocket.disconnect.mockClear()
+    mockSocket.__listeners.clear()
+    mockIo.mockClear()
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -284,5 +357,269 @@ describe('AppShell', () => {
 
       expect(screen.getByText('T')).toBeInTheDocument()
     })
+  })
+
+  // ── Real-Time 3B: notification bell ─────────────────────────────────────
+
+  describe('notification bell (Real-Time 3B)', () => {
+    // Routes fetch calls by URL/method the same way RequestDetail.test.tsx's
+    // stateful mocks do, so several endpoints can coexist in one test.
+    function notificationFetchMock({
+      unreadCount = 0,
+      list = [] as AppNotification[],
+    }: { unreadCount?: number; list?: AppNotification[] } = {}) {
+      return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(url)
+        const method = (init?.method as string | undefined) ?? 'GET'
+        if (method === 'GET' && u.endsWith('/api/notifications/unread-count')) {
+          return jsonResponse(200, { count: unreadCount })
+        }
+        if (method === 'GET' && u.endsWith('/api/notifications')) {
+          return jsonResponse(200, list)
+        }
+        if (method === 'PATCH' && u.endsWith('/read-all')) {
+          return jsonResponse(200, { status: 'ok' })
+        }
+        if (method === 'PATCH' && /\/api\/notifications\/[^/]+\/read$/.test(u)) {
+          return jsonResponse(200, { id: u.split('/').at(-2), read_at: '2026-01-01T00:00:00.000Z' })
+        }
+        return jsonResponse(404, { message: `unexpected call: ${method} ${u}` })
+      })
+    }
+
+    async function openBell(user: ReturnType<typeof userEvent.setup>, trigger: HTMLElement) {
+      await user.click(trigger)
+      await waitFor(
+        () => {
+          expect(trigger).toHaveAttribute('aria-expanded', 'true')
+        },
+        { timeout: MENU_SETTLE_TIMEOUT_MS },
+      )
+    }
+
+    // AC1: no badge shown when the unread count is 0
+    it('shows no badge on the bell when the unread count is 0', async () => {
+      vi.stubGlobal('fetch', notificationFetchMock({ unreadCount: 0 }))
+
+      const { container } = renderShell(fakeUser)
+
+      await waitFor(() => expect(fetch).toHaveBeenCalled())
+      expect(container.querySelector('.bg-destructive')).not.toBeInTheDocument()
+    })
+
+    // AC1: the badge shows the number when the unread count is > 0
+    it('shows the unread count on the bell badge when it is greater than 0', async () => {
+      vi.stubGlobal('fetch', notificationFetchMock({ unreadCount: 5 }))
+
+      renderShell(fakeUser)
+
+      await waitFor(() => expect(screen.getByText('5')).toBeInTheDocument())
+    })
+
+    // AC2: notification:created increments the badge by exactly 1 with no extra fetch
+    it('increments the badge by 1 on a notification:created socket event without an extra fetch', async () => {
+      vi.stubGlobal('fetch', notificationFetchMock({ unreadCount: 2 }))
+
+      renderShell(fakeUser)
+
+      await waitFor(() => expect(screen.getByText('2')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      mockSocket.__emit('notification:created', makeNotification())
+
+      await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument())
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+    })
+
+    // AC3: opening the bell dropdown triggers GET /api/notifications only while open,
+    // and renders the returned notifications' message text
+    it(
+      'fetches and renders notifications only once the bell dropdown is opened',
+      async () => {
+        const user = userEvent.setup()
+        vi.stubGlobal(
+          'fetch',
+          notificationFetchMock({
+            unreadCount: 1,
+            list: [makeNotification({ id: 'n1', message: 'Talebiniz üstlenildi' })],
+          }),
+        )
+
+        renderShell(fakeUser)
+
+        await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument())
+        expect(
+          vi.mocked(fetch).mock.calls.some(([u]) => String(u).endsWith('/api/notifications')),
+        ).toBe(false)
+
+        const bellTrigger = screen.getByRole('button', { name: /Bildirimler/ })
+        await openBell(user, bellTrigger)
+
+        await waitFor(() => expect(screen.getByText('Talebiniz üstlenildi')).toBeInTheDocument())
+        expect(
+          vi.mocked(fetch).mock.calls.some(([u]) => String(u).endsWith('/api/notifications')),
+        ).toBe(true)
+      },
+      MENU_SETTLE_TIMEOUT_MS + 10_000,
+    )
+
+    // AC4: clicking a notification marks it read, closes the dropdown, and navigates
+    // to the request when request_id is non-null
+    it(
+      'clicking a notification marks it read, closes the dropdown, and navigates to its request',
+      async () => {
+        const user = userEvent.setup()
+        vi.stubGlobal(
+          'fetch',
+          notificationFetchMock({
+            unreadCount: 1,
+            list: [makeNotification({ id: 'n1', request_id: 'req-9', message: 'Talebiniz üstlenildi' })],
+          }),
+        )
+
+        renderShell(fakeUser)
+
+        const bellTrigger = await screen.findByRole('button', { name: /Bildirimler/ })
+        await openBell(user, bellTrigger)
+
+        const item = await screen.findByText('Talebiniz üstlenildi')
+        await user.click(item)
+
+        await waitFor(() =>
+          expect(
+            vi.mocked(fetch).mock.calls.some(
+              ([u, init]) => String(u).endsWith('/api/notifications/n1/read') && init?.method === 'PATCH',
+            ),
+          ).toBe(true),
+        )
+
+        await waitFor(() => expect(screen.queryByText('Talebiniz üstlenildi')).not.toBeInTheDocument())
+        await waitFor(() => expect(screen.getByText('REQUEST DETAIL PAGE')).toBeInTheDocument())
+      },
+      MENU_SETTLE_TIMEOUT_MS + 10_000,
+    )
+
+    // AC4 edge case: a notification with request_id === null marks read but does not navigate
+    it(
+      'clicking a notification with a null request_id marks it read but does not navigate',
+      async () => {
+        const user = userEvent.setup()
+        vi.stubGlobal(
+          'fetch',
+          notificationFetchMock({
+            unreadCount: 1,
+            list: [makeNotification({ id: 'n1', request_id: null, message: 'Genel bildirim' })],
+          }),
+        )
+
+        renderShell(fakeUser)
+
+        const bellTrigger = await screen.findByRole('button', { name: /Bildirimler/ })
+        await openBell(user, bellTrigger)
+
+        const item = await screen.findByText('Genel bildirim')
+        await user.click(item)
+
+        await waitFor(() =>
+          expect(
+            vi.mocked(fetch).mock.calls.some(
+              ([u, init]) => String(u).endsWith('/api/notifications/n1/read') && init?.method === 'PATCH',
+            ),
+          ).toBe(true),
+        )
+
+        expect(screen.getByText('REQUESTS PAGE')).toBeInTheDocument()
+        expect(screen.queryByText('REQUEST DETAIL PAGE')).not.toBeInTheDocument()
+      },
+      MENU_SETTLE_TIMEOUT_MS + 10_000,
+    )
+
+    // AC5: "Tümünü Okundu İşaretle" calls PATCH /api/notifications/read-all
+    it(
+      'clicking "Tümünü Okundu İşaretle" calls PATCH /api/notifications/read-all',
+      async () => {
+        const user = userEvent.setup()
+        vi.stubGlobal(
+          'fetch',
+          notificationFetchMock({
+            unreadCount: 2,
+            list: [makeNotification({ id: 'n1' }), makeNotification({ id: 'n2' })],
+          }),
+        )
+
+        renderShell(fakeUser)
+
+        const bellTrigger = await screen.findByRole('button', { name: /Bildirimler/ })
+        await openBell(user, bellTrigger)
+
+        const markAllButton = await screen.findByRole('button', { name: 'Tümünü Okundu İşaretle' })
+        await user.click(markAllButton)
+
+        await waitFor(() =>
+          expect(
+            vi.mocked(fetch).mock.calls.some(
+              ([u, init]) => String(u).endsWith('/api/notifications/read-all') && init?.method === 'PATCH',
+            ),
+          ).toBe(true),
+        )
+      },
+      MENU_SETTLE_TIMEOUT_MS + 10_000,
+    )
+
+    // AC11: with no SocketProvider connection (useSocket() returns null, e.g. no
+    // session), the REST-driven parts of the bell still work with no crash.
+    // Mirrors SocketContext.test.tsx's own proof that no session -> no socket.
+    it(
+      'still fetches the unread count, opens the dropdown, and marks notifications read when there is no socket connection',
+      async () => {
+        const user = userEvent.setup()
+        vi.stubGlobal(
+          'fetch',
+          notificationFetchMock({
+            unreadCount: 1,
+            list: [makeNotification({ id: 'n1', request_id: null, message: 'Bağlantısız bildirim' })],
+          }),
+        )
+
+        // Deliberately no seedSession(): AuthProvider has no token, so
+        // SocketProvider never creates a socket and useSocket() returns null.
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        render(
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <SocketProvider>
+                <MemoryRouter initialEntries={['/requests']}>
+                  <Routes>
+                    <Route element={<AppShell />}>
+                      <Route path="/requests" element={<div>REQUESTS PAGE</div>} />
+                    </Route>
+                  </Routes>
+                </MemoryRouter>
+              </SocketProvider>
+            </AuthProvider>
+          </QueryClientProvider>,
+        )
+
+        expect(mockIo).not.toHaveBeenCalled()
+
+        await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument())
+
+        const bellTrigger = screen.getByRole('button', { name: /Bildirimler/ })
+        await openBell(user, bellTrigger)
+
+        const item = await screen.findByText('Bağlantısız bildirim')
+        await user.click(item)
+
+        await waitFor(() =>
+          expect(
+            vi.mocked(fetch).mock.calls.some(
+              ([u, init]) => String(u).endsWith('/api/notifications/n1/read') && init?.method === 'PATCH',
+            ),
+          ).toBe(true),
+        )
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      },
+      MENU_SETTLE_TIMEOUT_MS + 10_000,
+    )
   })
 })
