@@ -103,23 +103,31 @@ describe('AppShell', () => {
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
-  // AC4: DEPARTMENT_AUTHORITY sidebar shows "Kuyruk" then "Talepler", no "Kullanıcılar"
+  // AC7: "Genel Bakış" (analytics) is never shown to an EMPLOYEE
+  it('does not show "Genel Bakış" in the nav for an EMPLOYEE user', () => {
+    renderShell({ ...fakeUser, role: 'EMPLOYEE' })
+
+    const nav = screen.getByRole('navigation')
+    expect(within(nav).queryByText('Genel Bakış')).not.toBeInTheDocument()
+  })
+
+  // AC4: DEPARTMENT_AUTHORITY sidebar shows "Kuyruk", "Talepler", then "Genel Bakış", no "Kullanıcılar"
   it('shows "Kuyruk" then "Talepler", and no "Kullanıcılar", for a DEPARTMENT_AUTHORITY user', () => {
     renderShell({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Kuyruk', 'Talepler'])
+    expect(links.map((link) => link.textContent)).toEqual(['Kuyruk', 'Talepler', 'Genel Bakış'])
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
-  // AC4: ADMIN sidebar shows all three, in "Talepler", "Kuyruk", "Kullanıcılar" order
+  // AC4: ADMIN sidebar shows all four, in "Genel Bakış", "Talepler", "Kuyruk", "Kullanıcılar" order
   it('shows "Talepler", "Kuyruk", "Kullanıcılar" in that order for an ADMIN user', () => {
     renderShell({ ...fakeUser, role: 'ADMIN' })
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Talepler', 'Kuyruk', 'Kullanıcılar'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Talepler', 'Kuyruk', 'Kullanıcılar'])
   })
 
   // AC5: clicking "Çıkış Yap" calls logout (observed via cleared session storage)

@@ -1,4 +1,4 @@
-import { Activity, ClipboardList, Inbox, LogOut, User, Users, type LucideIcon } from 'lucide-react'
+import { Activity, ClipboardList, Inbox, LayoutDashboard, LogOut, User, Users, type LucideIcon } from 'lucide-react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import {
@@ -20,20 +20,21 @@ const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: Lucid
   DEPARTMENT_AUTHORITY: [
     { to: '/queue', label: 'Kuyruk', icon: Inbox },
     { to: '/requests', label: 'Talepler', icon: ClipboardList },
+    { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },
   ],
   ADMIN: [
+    { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },
     { to: '/requests', label: 'Talepler', icon: ClipboardList },
     { to: '/queue', label: 'Kuyruk', icon: Inbox },
     { to: '/admin/users', label: 'Kullanıcılar', icon: Users },
   ],
 }
 
-// DEPARTMENT_AUTHORITY's real target would be /queue, but Kuyruk is still a
-// placeholder (out of scope for this task) — everyone lands on /requests
-// today; this function exists so only this one return value needs to
-// change later, not the route tree.
-export function getLandingPath(_role: string): string {
-  return '/requests'
+// ADMIN's role definition includes "system-wide dashboard" (CLAUDE.md), so
+// they land on the analytics overview; every other role still lands on
+// their request list — the operational entry point for their actual work.
+export function getLandingPath(role: string): string {
+  return role === 'ADMIN' ? '/analytics' : '/requests'
 }
 
 export function AppShell() {

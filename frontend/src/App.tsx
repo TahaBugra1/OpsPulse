@@ -7,6 +7,7 @@ import { AppShell, getLandingPath } from '@/components/AppShell'
 import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { setUnauthorizedHandler } from '@/lib/api'
+import Analytics from '@/pages/Analytics'
 import ComingSoon from '@/pages/ComingSoon'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
@@ -47,6 +48,7 @@ function App() {
               <Route element={<ProtectedRoute />}>
                 <Route element={<AppShell />}>
                   <Route index element={<RootRedirect />} />
+                  <Route path="/analytics" element={<Analytics />} />
                   <Route path="/requests" element={<Requests />} />
                   <Route path="/requests/new" element={<NewRequest />} />
                   <Route path="/requests/:id" element={<RequestDetail />} />
