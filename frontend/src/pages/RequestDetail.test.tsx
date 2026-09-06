@@ -5,8 +5,37 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RequestDetail from './RequestDetail'
 import { AuthProvider } from '@/context/AuthContext'
+import { SocketProvider } from '@/context/SocketContext'
 import type { AuthUser } from '@/lib/authStorage'
 import type { RequestComment, RequestListItem } from '@/lib/requests'
+
+// Real socket.io-client is mocked so no actual WebSocket connection is
+// attempted in jsdom — SocketProvider calls createSocket()/io() for real
+// whenever a token is present, and every test here seeds a session.
+const { mockSocket, mockIo } = vi.hoisted(() => {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
+  const mockSocket = {
+    emit: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      if (!listeners.has(event)) listeners.set(event, new Set())
+      listeners.get(event)!.add(handler)
+    }),
+    off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      listeners.get(event)?.delete(handler)
+    }),
+    disconnect: vi.fn(),
+    // Test helper: simulates the server (or the socket itself, for 'connect')
+    // firing an event to every listener currently registered for it.
+    __emit: (event: string, payload?: unknown) => {
+      listeners.get(event)?.forEach((handler) => handler(payload))
+    },
+    __listeners: listeners,
+  }
+  const mockIo = vi.fn(() => mockSocket)
+  return { mockSocket, mockIo }
+})
+
+vi.mock('socket.io-client', () => ({ io: mockIo }))
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -83,11 +112,13 @@ function renderDetail(user: AuthUser = fakeUser, id = 'uuid-1111-2222') {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter initialEntries={[`/requests/${id}`]}>
-          <Routes>
-            <Route path="/requests/:id" element={<RequestDetail />} />
-          </Routes>
-        </MemoryRouter>
+        <SocketProvider>
+          <MemoryRouter initialEntries={[`/requests/${id}`]}>
+            <Routes>
+              <Route path="/requests/:id" element={<RequestDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </SocketProvider>
       </AuthProvider>
     </QueryClientProvider>,
   )
@@ -98,6 +129,12 @@ describe('RequestDetail page', () => {
     sessionStorage.clear()
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn())
+    mockSocket.emit.mockClear()
+    mockSocket.on.mockClear()
+    mockSocket.off.mockClear()
+    mockSocket.disconnect.mockClear()
+    mockSocket.__listeners.clear()
+    mockIo.mockClear()
   })
 
   afterEach(() => {
@@ -751,6 +788,147 @@ describe('RequestDetail page', () => {
       expect(screen.queryByLabelText('Öncelik Değiştir')).not.toBeInTheDocument()
 
       expect(screen.getByLabelText('Yorum Ekle')).toBeInTheDocument()
+    })
+  })
+
+  // ── Real-Time 3A: live updates via socket ───────────────────────────────
+
+  describe('live updates (Real-Time 3A)', () => {
+    // AC2: joins the request's room on mount
+    it('emits join:request with the request id on mount', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(mockSocket.emit).toHaveBeenCalledWith('join:request', 'uuid-1111-2222')
+    })
+
+    // AC3: request:updated applies directly to the cache, no refetch
+    it('applies a request:updated event directly to the cache without an extra fetch', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', priority: 'LOW' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(screen.getByText('Açık')).toBeInTheDocument()
+      expect(screen.getByText('Düşük')).toBeInTheDocument()
+
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      const updated = makeRequest({ status: 'ASSIGNED', priority: 'HIGH' })
+      mockSocket.__emit('request:updated', updated)
+
+      await waitFor(() => expect(screen.getByText('Atandı')).toBeInTheDocument())
+      expect(screen.getByText('Yüksek')).toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+    })
+
+    // AC4: request:commented appends a new comment directly to the cache, no refetch
+    it('appends a new comment from a request:commented event without an extra fetch', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [makeComment()]))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Durum nedir?')).toBeInTheDocument())
+
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      const newComment = makeComment({ id: 'new-c', content: 'Yeni yorum geldi', author_name: 'Ahmet' })
+      mockSocket.__emit('request:commented', newComment)
+
+      await waitFor(() => expect(screen.getByText('Yeni yorum geldi')).toBeInTheDocument())
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+    })
+
+    // AC4: a request:commented event for a comment already in the list is not duplicated
+    it('does not duplicate a comment when request:commented repeats an id already in the list', async () => {
+      const existing = makeComment({ id: 'c1', content: 'Durum nedir?' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [existing]))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Durum nedir?')).toBeInTheDocument())
+      expect(screen.getAllByText('Durum nedir?').length).toBe(1)
+
+      mockSocket.__emit('request:commented', makeComment({ id: 'c1', content: 'Durum nedir?' }))
+
+      await waitFor(() => expect(screen.getAllByText('Durum nedir?').length).toBe(1))
+    })
+
+    // AC5: reconnection rejoins the room
+    it('rejoins the room when the socket reconnects', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(mockSocket.emit).toHaveBeenCalledWith('join:request', 'uuid-1111-2222')
+      const joinCallsBefore = mockSocket.emit.mock.calls.filter(
+        (call) => call[0] === 'join:request' && call[1] === 'uuid-1111-2222',
+      ).length
+
+      mockSocket.__emit('connect')
+
+      const joinCallsAfter = mockSocket.emit.mock.calls.filter(
+        (call) => call[0] === 'join:request' && call[1] === 'uuid-1111-2222',
+      ).length
+      expect(joinCallsAfter).toBeGreaterThan(joinCallsBefore)
+    })
+
+    // AC6: listeners are cleaned up on unmount
+    it('removes all its socket listeners on unmount', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      const { unmount } = renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+
+      unmount()
+
+      const offEventNames = mockSocket.off.mock.calls.map((call) => call[0])
+      expect(offEventNames).toContain('connect')
+      expect(offEventNames).toContain('request:updated')
+      expect(offEventNames).toContain('request:commented')
+    })
+
+    // AC10: switching from one request to another re-joins for the new id and stops
+    // reacting to the old one's events. A true in-place navigation isn't easily
+    // simulated with MemoryRouter here, so this uses an explicit unmount-then-mount
+    // cycle against the same shared mockSocket singleton — an accepted, honest proxy
+    // for the cleanup-then-rejoin behavior real navigation would trigger.
+    it('rejoins for a newly viewed request after leaving the previous one', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest({ id: 'uuid-1111-2222' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      const first = renderDetail(fakeUser, 'uuid-1111-2222')
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(mockSocket.emit).toHaveBeenCalledWith('join:request', 'uuid-1111-2222')
+
+      first.unmount()
+      const offEventNames = mockSocket.off.mock.calls.map((call) => call[0])
+      expect(offEventNames).toContain('request:updated')
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest({ id: 'uuid-3333-4444' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(fakeUser, 'uuid-3333-4444')
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(mockSocket.emit).toHaveBeenCalledWith('join:request', 'uuid-3333-4444')
     })
   })
 })

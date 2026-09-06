@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
-import { type ChangeEvent, useState } from 'react'
+import { type ChangeEvent, useEffect, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
@@ -17,9 +17,12 @@ import {
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/context/AuthContext'
+import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
   PRIORITY_LABELS,
+  type RequestComment,
+  type RequestListItem,
   STATUS_LABELS,
   useAddComment,
   useChangePriority,
@@ -45,6 +48,7 @@ export default function RequestDetail() {
   const queryClient = useQueryClient()
   const requestQuery = useRequest(requestId)
   const commentsQuery = useRequestComments(requestId)
+  const socket = useSocket()
 
   const claimMutation = useClaimRequest(requestId)
   const statusMutation = useChangeRequestStatus(requestId)
@@ -141,6 +145,44 @@ export default function RequestDetail() {
       },
     )
   }
+
+  // Live updates: while this page is mounted, join this request's socket room
+  // and apply incoming events directly to the query cache. The payloads are
+  // the same enriched shape GET already returns, so no extra fetch is needed.
+  // If there's no socket yet (not connected / connection failed), this simply
+  // does nothing and the page keeps working off REST alone.
+  useEffect(() => {
+    if (!socket || !requestId) return
+
+    function joinRoom() {
+      socket!.emit('join:request', requestId)
+    }
+    joinRoom()
+    // Room membership lives on the socket connection and is lost on
+    // disconnect, so rejoin on every (re)connect, not just on mount.
+    socket.on('connect', joinRoom)
+
+    function handleRequestUpdated(payload: RequestListItem) {
+      queryClient.setQueryData(['requests', requestId], payload)
+    }
+
+    function handleRequestCommented(payload: RequestComment) {
+      queryClient.setQueryData(['requests', requestId, 'comments'], (old: RequestComment[] | undefined) => {
+        if (!old) return old
+        if (old.some((c) => c.id === payload.id)) return old
+        return [...old, payload]
+      })
+    }
+
+    socket.on('request:updated', handleRequestUpdated)
+    socket.on('request:commented', handleRequestCommented)
+
+    return () => {
+      socket.off('connect', joinRoom)
+      socket.off('request:updated', handleRequestUpdated)
+      socket.off('request:commented', handleRequestCommented)
+    }
+  }, [socket, requestId, queryClient])
 
   // Visibility mirrors the backend's real authorization rules (UX only — the
   // backend re-validates every action independently).

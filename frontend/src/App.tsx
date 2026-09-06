@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
 import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
+import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
 import Analytics from '@/pages/Analytics'
 import ComingSoon from '@/pages/ComingSoon'
@@ -43,26 +44,28 @@ function App() {
       <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
         <AuthProvider>
           <AuthWiring />
-          <BrowserRouter>
-            <Routes>
-              <Route element={<ProtectedRoute />}>
-                <Route element={<AppShell />}>
-                  <Route index element={<RootRedirect />} />
-                  <Route path="/analytics" element={<Analytics />} />
-                  <Route path="/requests" element={<Requests />} />
-                  <Route path="/requests/new" element={<NewRequest />} />
-                  <Route path="/requests/:id" element={<RequestDetail />} />
-                  <Route path="/profile" element={<Profile />} />
-                  <Route path="/queue" element={<ComingSoon title="Kuyruk" />} />
-                  <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
+          <SocketProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route element={<ProtectedRoute />}>
+                  <Route element={<AppShell />}>
+                    <Route index element={<RootRedirect />} />
+                    <Route path="/analytics" element={<Analytics />} />
+                    <Route path="/requests" element={<Requests />} />
+                    <Route path="/requests/new" element={<NewRequest />} />
+                    <Route path="/requests/:id" element={<RequestDetail />} />
+                    <Route path="/profile" element={<Profile />} />
+                    <Route path="/queue" element={<ComingSoon title="Kuyruk" />} />
+                    <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
+                  </Route>
                 </Route>
-              </Route>
-              <Route element={<GuestOnlyRoute />}>
-                <Route path="/login" element={<Login />} />
-              </Route>
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
+                <Route element={<GuestOnlyRoute />}>
+                  <Route path="/login" element={<Login />} />
+                </Route>
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </SocketProvider>
           <Toaster />
         </AuthProvider>
       </GoogleOAuthProvider>
