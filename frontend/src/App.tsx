@@ -8,8 +8,8 @@ import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
+import AdminUsers from '@/pages/AdminUsers'
 import Analytics from '@/pages/Analytics'
-import ComingSoon from '@/pages/ComingSoon'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
 import NotFound from '@/pages/NotFound'
@@ -57,7 +57,7 @@ function App() {
                     <Route path="/requests/:id" element={<RequestDetail />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/queue" element={<Queue />} />
-                    <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
+                    <Route path="/admin/users" element={<AdminUsers />} />
                   </Route>
                 </Route>
                 <Route element={<GuestOnlyRoute />}>
