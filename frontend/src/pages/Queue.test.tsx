@@ -319,4 +319,83 @@ describe('Queue page', () => {
     const offEventNames = mockSocket.off.mock.calls.map((call) => call[0])
     expect(offEventNames).toContain('request:removedFromQueue')
   })
+
+  // request:addedToQueue AC: a socket event carrying the full enriched row prepends
+  // to the raw (newest-first) cache, which - after useOpenQueue's .reverse() for
+  // display - renders the new item as the LAST row (FIFO/oldest-first order), with
+  // zero extra fetch calls (no refetch/invalidate).
+  it('appends a row as the last item when a request:addedToQueue socket event fires, with no extra fetch calls', async () => {
+    const existing1 = makeRequest({ id: 'existing-1', request_number: 1, title: 'Existing One' })
+    const existing2 = makeRequest({ id: 'existing-2', request_number: 2, title: 'Existing Two' })
+    // Raw cache is newest-first (DESC from backend): existing2 then existing1.
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [existing2, existing1]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+    const added = makeRequest({ id: 'added-id', request_number: 3, title: 'Brand New' })
+    mockSocket.__emit('request:addedToQueue', added)
+
+    await waitFor(() => expect(screen.getByText('Brand New')).toBeInTheDocument())
+
+    const rows = screen.getAllByRole('row').slice(1) // drop header row
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining('Existing One'),
+      expect.stringContaining('Existing Two'),
+      expect.stringContaining('Brand New'),
+    ])
+    expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+  })
+
+  // request:addedToQueue AC: unmounting removes the request:addedToQueue socket
+  // listener too (extends the existing unmount test).
+  it('removes the request:addedToQueue socket listener on unmount', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    const { unmount } = renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    unmount()
+
+    const offEventNames = mockSocket.off.mock.calls.map((call) => call[0])
+    expect(offEventNames).toContain('request:addedToQueue')
+  })
+
+  // request:addedToQueue idempotency guard: in a narrow race the initial
+  // GET /api/requests?status=OPEN can already contain request X while X's socket
+  // event is delivered afterwards. The handler's `old.some(...)` check must leave
+  // the cache untouched so X renders as exactly one <tr>, not two rows sharing
+  // the same React key, and still without any extra fetch.
+  it('ignores a request:addedToQueue event for a request already in the list, rendering it once', async () => {
+    const duplicate = makeRequest({ id: 'dupe-id', request_number: 7, title: 'Already Listed' })
+    const other = makeRequest({ id: 'other-id', request_number: 8, title: 'Other One' })
+    // Raw cache is newest-first (DESC from backend): other then duplicate.
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [other, duplicate]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    const rowCountBefore = screen.getAllByRole('row').slice(1).length // drop header row
+    expect(rowCountBefore).toBe(2)
+    const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+    mockSocket.__emit('request:addedToQueue', duplicate)
+
+    // A duplicate is a no-op: the updater returns the same array identity, so
+    // there is no change to wait *for*. This waitFor asserts an already-true
+    // condition purely to flush any pending React work before the end-state
+    // assertions below — without it a wrongly-added row would render too late
+    // to be observed, and this test would pass even with the guard removed.
+    await waitFor(() => expect(screen.getByText('Already Listed')).toBeInTheDocument())
+
+    const rowsAfter = screen.getAllByRole('row').slice(1) // drop header row
+    expect(rowsAfter.length).toBe(rowCountBefore)
+    expect(rowsAfter.filter((row) => row.textContent?.includes('Already Listed')).length).toBe(1)
+    expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+  })
 })

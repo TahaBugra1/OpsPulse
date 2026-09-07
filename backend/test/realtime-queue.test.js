@@ -350,3 +350,109 @@ test('isolation - EMPLOYEE socket never receives request:removedFromQueue for a 
   const { result, SENTINEL } = await removedPromise;
   assert.equal(result, SENTINEL, 'EMPLOYEE socket must never receive request:removedFromQueue');
 });
+
+// AC1/AC2 (request:addedToQueue): a DEPARTMENT_AUTHORITY socket auto-joined to its own
+// department-queue:<department_id> room (no explicit join event) receives
+// request:addedToQueue with the FULL enriched row when a new OPEN request is created
+// for that department.
+test('DEPARTMENT_AUTHORITY socket receives request:addedToQueue with the full enriched row on request creation', async (t) => {
+  const employee = await registerEmployee();
+
+  const observerSocket = connectSocket(itAuthorityToken);
+  t.after(() => observerSocket.close());
+  await waitForConnect(observerSocket);
+  // Deliberately never emit any join event for this socket - department-queue
+  // membership is automatic on connect.
+
+  const addedPromise = waitForEvent(observerSocket, 'request:addedToQueue', 3000);
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  registerCleanup(t, [employee], [created.body.id]);
+
+  const { result, SENTINEL } = await addedPromise;
+  assert.notEqual(result, SENTINEL, 'expected request:addedToQueue event without any join event');
+  assert.equal(result.id, created.body.id);
+  assert.equal(result.title, 'Test request');
+  assert.equal(result.status, 'OPEN');
+  assert.equal(result.department_id, itDepartmentId);
+  assert.equal(result.request_type_name, 'Password Reset');
+  assert.equal(result.department_name, 'IT');
+  assert.equal(result.created_by_name, 'Test Employee'); // registerEmployee() defaults
+  assert.equal(result.assigned_to, null);
+  assert.equal(result.priority, 'LOW');
+});
+
+// AC3 (isolation): a DEPARTMENT_AUTHORITY socket connected to Department A's queue (IT)
+// receives NOTHING when a new request is created for Department B (HR) - no global
+// broadcast across department-queue rooms.
+test('isolation - IT authority socket receives no request:addedToQueue for an HR department request creation', async (t) => {
+  const employee = await registerEmployee();
+
+  const itSocket = connectSocket(itAuthorityToken);
+  t.after(() => itSocket.close());
+  await waitForConnect(itSocket);
+
+  const addedPromise = waitForEvent(itSocket, 'request:addedToQueue', 1500);
+
+  const created = await createRequestAs(employee.token, leaveRequestTypeId, 'LOW');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  registerCleanup(t, [employee], [created.body.id]);
+
+  const { result, SENTINEL } = await addedPromise;
+  assert.equal(
+    result,
+    SENTINEL,
+    'IT authority socket must not receive request:addedToQueue for an HR department request creation'
+  );
+});
+
+// AC5: an EMPLOYEE socket (including the very employee who created the request) never
+// receives request:addedToQueue - EMPLOYEE sockets never join any department-queue:*
+// room.
+test('isolation - EMPLOYEE socket never receives request:addedToQueue for its own request creation', async (t) => {
+  const employee = await registerEmployee();
+
+  const employeeSocket = connectSocket(employee.token);
+  t.after(() => employeeSocket.close());
+  await waitForConnect(employeeSocket);
+
+  const addedPromise = waitForEvent(employeeSocket, 'request:addedToQueue', 1500);
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  registerCleanup(t, [employee], [created.body.id]);
+
+  const { result, SENTINEL } = await addedPromise;
+  assert.equal(result, SENTINEL, 'EMPLOYEE socket must never receive request:addedToQueue');
+});
+
+// AC6: TWO DEPARTMENT_AUTHORITY sockets in the SAME department both receive
+// request:addedToQueue when a new request is created for that department.
+test('two same-department authority sockets both receive request:addedToQueue on request creation', async (t) => {
+  const employee = await registerEmployee();
+  const secondAuthority = await createSecondItAuthority();
+
+  const socketA = connectSocket(itAuthorityToken);
+  const socketB = connectSocket(secondAuthority.token);
+  t.after(() => socketA.close());
+  t.after(() => socketB.close());
+  await Promise.all([waitForConnect(socketA), waitForConnect(socketB)]);
+
+  const promiseA = waitForEvent(socketA, 'request:addedToQueue', 3000);
+  const promiseB = waitForEvent(socketB, 'request:addedToQueue', 3000);
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  registerCleanup(t, [employee, secondAuthority], [created.body.id]);
+
+  const [{ result: resultA, SENTINEL: sentinelA }, { result: resultB, SENTINEL: sentinelB }] = await Promise.all([
+    promiseA,
+    promiseB,
+  ]);
+
+  assert.notEqual(resultA, sentinelA, 'socket A should have received request:addedToQueue');
+  assert.equal(resultA.id, created.body.id);
+  assert.notEqual(resultB, sentinelB, 'socket B should have received request:addedToQueue');
+  assert.equal(resultB.id, created.body.id);
+});

@@ -66,7 +66,7 @@ async function createRequest({ title, description, request_type_id, priority }, 
   const createdAt = new Date();
   const slaDueAt = computeSlaDueAt(createdAt, resolvedPriority);
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     const insertResult = await client.query(
       `INSERT INTO requests
         (title, description, request_type_id, department_id, created_by, priority, status, assigned_to, created_at, sla_due_at)
@@ -84,6 +84,14 @@ async function createRequest({ title, description, request_type_id, priority }, 
 
     return request;
   });
+
+  try {
+    const enriched = await fetchEnrichedRequest(result.id);
+    emitToDepartmentQueue(enriched.department_id, 'request:addedToQueue', enriched);
+  } catch (emitErr) {
+    console.error('request:addedToQueue emisyonu basarisiz oldu:', emitErr);
+  }
+  return result;
 }
 
 async function claimRequest(requestId, user) {

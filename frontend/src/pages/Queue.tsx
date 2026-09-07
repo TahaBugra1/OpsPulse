@@ -32,10 +32,23 @@ export default function Queue() {
       )
     }
 
+    // useOpenQueue()'s raw cache holds the backend's `created_at DESC` order and
+    // only flips it to oldest-first FIFO at read time via `select`, so a newly
+    // created (= newest) request must be prepended here to render last.
+    function handleAdded(payload: RequestListItem) {
+      queryClient.setQueryData(['requests', 'queue'], (old: RequestListItem[] | undefined) => {
+        if (!old) return [payload]
+        if (old.some((request) => request.id === payload.id)) return old
+        return [payload, ...old]
+      })
+    }
+
     socket.on('request:removedFromQueue', handleRemoved)
+    socket.on('request:addedToQueue', handleAdded)
 
     return () => {
       socket.off('request:removedFromQueue', handleRemoved)
+      socket.off('request:addedToQueue', handleAdded)
     }
   }, [socket, queryClient])
 
