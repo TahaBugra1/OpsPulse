@@ -3,12 +3,13 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  useAnalyticsBottlenecks,
   useAnalyticsDistribution,
   useAnalyticsSla,
   useAnalyticsSummary,
   useAnalyticsWorkload,
 } from './analytics'
-import type { DistributionData } from './analytics'
+import type { BottlenecksData, DistributionData } from './analytics'
 
 function makeDistribution(overrides: Partial<DistributionData> = {}): DistributionData {
   return {
@@ -158,6 +159,69 @@ describe('analytics lib', () => {
       const [secondUrl] = vi.mocked(fetch).mock.calls[1]
       expect(String(firstUrl)).toContain('days=30')
       expect(String(secondUrl)).toContain('days=7')
+    })
+  })
+
+  describe('useAnalyticsBottlenecks', () => {
+    function makeBottlenecks(overrides: Partial<BottlenecksData> = {}): BottlenecksData {
+      return {
+        slaBreachByDepartment: [{ department: 'IT', count: 3 }],
+        slaBreachByRequestType: [{ requestType: 'Donanım Arızası', count: 3 }],
+        stageDurations: [
+          { stage: 'OPEN_TO_ASSIGNED', avg_hours: 2 },
+          { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: 5 },
+          { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+        ],
+        authorityWorkload: [
+          { authority_name: 'Ali Veli', department_name: 'IT', active_count: 4 },
+        ],
+        ...overrides,
+      }
+    }
+
+    // AC1: calls GET /api/analytics/bottlenecks and returns data whose
+    // stageDurations come back sorted descending by avg_hours, with the
+    // null-valued entry last (proving the hook's own `select` sort, not a
+    // pre-sorted mock, is what produces this order)
+    it('calls GET /api/analytics/bottlenecks and returns stageDurations sorted descending with nulls last', async () => {
+      const bottlenecks = makeBottlenecks({
+        stageDurations: [
+          { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: 5 },
+          { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+          { stage: 'OPEN_TO_ASSIGNED', avg_hours: 2 },
+        ],
+      })
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, bottlenecks))
+
+      const { result } = renderHook(() => useAnalyticsBottlenecks(), { wrapper: wrapper() })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(result.current.data?.stageDurations).toEqual([
+        { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: 5 },
+        { stage: 'OPEN_TO_ASSIGNED', avg_hours: 2 },
+        { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+      ])
+      const [url, options] = vi.mocked(fetch).mock.calls[0]
+      expect(String(url)).toContain('/api/analytics/bottlenecks')
+      expect(options?.method).toBe('GET')
+    })
+
+    // AC1: slaBreachByDepartment, slaBreachByRequestType, and authorityWorkload
+    // pass through untransformed
+    it('returns slaBreachByDepartment, slaBreachByRequestType, and authorityWorkload untransformed', async () => {
+      const bottlenecks = makeBottlenecks()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, bottlenecks))
+
+      const { result } = renderHook(() => useAnalyticsBottlenecks(), { wrapper: wrapper() })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(result.current.data?.slaBreachByDepartment).toEqual(bottlenecks.slaBreachByDepartment)
+      expect(result.current.data?.slaBreachByRequestType).toEqual(
+        bottlenecks.slaBreachByRequestType,
+      )
+      expect(result.current.data?.authorityWorkload).toEqual(bottlenecks.authorityWorkload)
     })
   })
 })

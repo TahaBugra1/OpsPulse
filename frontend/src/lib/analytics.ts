@@ -1,6 +1,6 @@
 // Analytics data layer: read-only TanStack Query hooks for the summary,
-// SLA, department workload, and distribution endpoints (no mutations —
-// nothing here writes anything).
+// SLA, department workload, distribution, and bottlenecks endpoints (no
+// mutations — nothing here writes anything).
 
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from './api'
@@ -61,5 +61,31 @@ export function useAnalyticsDistribution(days: number) {
   return useQuery({
     queryKey: ['analytics', 'distribution', days],
     queryFn: () => apiGet<DistributionData>(`/api/analytics/distribution?days=${days}`),
+  })
+}
+
+export interface BottlenecksData {
+  slaBreachByDepartment: { department: string; count: number }[]
+  slaBreachByRequestType: { requestType: string; count: number }[]
+  stageDurations: { stage: string; avg_hours: number | null }[]
+  authorityWorkload: { authority_name: string; department_name: string; active_count: number }[]
+}
+
+export const STAGE_LABELS: Record<string, string> = {
+  OPEN_TO_ASSIGNED: 'Açık → Atandı',
+  ASSIGNED_TO_IN_PROGRESS: 'Atandı → İşlemde',
+  IN_PROGRESS_TO_COMPLETED: 'İşlemde → Tamamlandı',
+}
+
+export function useAnalyticsBottlenecks() {
+  return useQuery({
+    queryKey: ['analytics', 'bottlenecks'],
+    queryFn: () => apiGet<BottlenecksData>('/api/analytics/bottlenecks'),
+    select: (data) => ({
+      ...data,
+      stageDurations: [...data.stageDurations].sort(
+        (a, b) => (b.avg_hours ?? -1) - (a.avg_hours ?? -1),
+      ),
+    }),
   })
 }

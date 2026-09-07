@@ -18,6 +18,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  STAGE_LABELS,
+  useAnalyticsBottlenecks,
   useAnalyticsDistribution,
   useAnalyticsSla,
   useAnalyticsSummary,
@@ -47,6 +49,18 @@ const VOLUME_CHART_CONFIG = {
   count: { label: 'Talep', color: 'var(--chart-5)' },
 } satisfies ChartConfig
 
+const SLA_BREACH_DEPT_CONFIG = {
+  count: { label: 'İhlal', color: 'var(--destructive)' },
+} satisfies ChartConfig
+
+const SLA_BREACH_TYPE_CONFIG = {
+  count: { label: 'İhlal', color: 'var(--destructive)' },
+} satisfies ChartConfig
+
+const STAGE_DURATION_CONFIG = {
+  avg_hours: { label: 'Saat', color: 'var(--chart-1)' },
+} satisfies ChartConfig
+
 export default function Analytics() {
   const summaryQuery = useAnalyticsSummary()
   const slaQuery = useAnalyticsSla()
@@ -57,6 +71,9 @@ export default function Analytics() {
   const [days, setDays] = useState(30)
   const distributionQuery = useAnalyticsDistribution(days)
   const distribution = distributionQuery.data
+
+  const bottlenecksQuery = useAnalyticsBottlenecks()
+  const bottlenecks = bottlenecksQuery.data
 
   return (
     <div className="flex flex-col gap-4">
@@ -455,6 +472,195 @@ export default function Analytics() {
                   </AreaChart>
                 </ChartContainer>
               )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {bottlenecksQuery.isError && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Darboğazlar</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col items-start gap-3">
+              <p role="alert" className="text-sm font-normal text-destructive">
+                {bottlenecksQuery.error instanceof Error
+                  ? bottlenecksQuery.error.message
+                  : 'Darboğaz verileri yüklenemedi, lütfen tekrar deneyin'}
+              </p>
+              <Button type="button" onClick={() => bottlenecksQuery.refetch()}>
+                Tekrar Dene
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!bottlenecksQuery.isError && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>SLA İhlalleri (Departman)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {bottlenecksQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+              {bottlenecks && bottlenecks.slaBreachByDepartment.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {bottlenecks && bottlenecks.slaBreachByDepartment.some((row) => row.count > 0) && (
+                <ChartContainer config={SLA_BREACH_DEPT_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={bottlenecks.slaBreachByDepartment.map((row) => ({
+                      label: row.department,
+                      count: row.count,
+                    }))}
+                    margin={{ top: 24 }}
+                  >
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="top" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>SLA İhlalleri (Talep Türü)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {bottlenecksQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+              {bottlenecks && bottlenecks.slaBreachByRequestType.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {bottlenecks && bottlenecks.slaBreachByRequestType.some((row) => row.count > 0) && (
+                <ChartContainer config={SLA_BREACH_TYPE_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={bottlenecks.slaBreachByRequestType.map((row) => ({
+                      label: row.requestType,
+                      count: row.count,
+                    }))}
+                    margin={{ top: 24 }}
+                  >
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="top" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Aşama Süreleri</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {bottlenecksQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+              {bottlenecks && bottlenecks.stageDurations.every((row) => row.avg_hours === null) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {bottlenecks && bottlenecks.stageDurations.some((row) => row.avg_hours !== null) && (
+                <>
+                  <ChartContainer config={STAGE_DURATION_CONFIG} className="h-64 w-full">
+                    <BarChart
+                      data={bottlenecks.stageDurations
+                        .filter((row) => row.avg_hours !== null)
+                        .map((row) => ({
+                          label: STAGE_LABELS[row.stage] ?? row.stage,
+                          avg_hours: row.avg_hours,
+                        }))}
+                      layout="vertical"
+                      margin={{ right: 32 }}
+                    >
+                      <CartesianGrid horizontal={false} />
+                      <XAxis type="number" hide allowDecimals={false} />
+                      <YAxis
+                        type="category"
+                        dataKey="label"
+                        tickLine={false}
+                        axisLine={false}
+                        width={140}
+                      />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="avg_hours" fill="var(--color-avg_hours)" radius={4}>
+                        <LabelList dataKey="avg_hours" position="right" className="fill-foreground" />
+                      </Bar>
+                    </BarChart>
+                  </ChartContainer>
+                  {bottlenecks.stageDurations
+                    .filter((row) => row.avg_hours === null)
+                    .map((row) => (
+                      <p key={row.stage} className="text-sm text-muted-foreground">
+                        {STAGE_LABELS[row.stage] ?? row.stage}: Veri yok
+                      </p>
+                    ))}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Yetkili İş Yükü</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {bottlenecksQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+              {bottlenecks &&
+                (bottlenecks.authorityWorkload.length === 0 ||
+                  bottlenecks.authorityWorkload.every((row) => row.active_count === 0)) && (
+                  <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                    <PackageOpen className="size-10" />
+                    <p>Henüz veri yok</p>
+                  </div>
+                )}
+
+              {bottlenecks &&
+                bottlenecks.authorityWorkload.length > 0 &&
+                bottlenecks.authorityWorkload.some((row) => row.active_count > 0) && (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Yetkili</TableHead>
+                        <TableHead>Departman</TableHead>
+                        <TableHead>Aktif Talep</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bottlenecks.authorityWorkload.map((row) => (
+                        <TableRow key={row.authority_name + row.department_name}>
+                          <TableCell>{row.authority_name}</TableCell>
+                          <TableCell>{row.department_name}</TableCell>
+                          <TableCell>{row.active_count}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
             </CardContent>
           </Card>
         </>

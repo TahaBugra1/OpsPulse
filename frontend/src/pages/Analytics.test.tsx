@@ -3,7 +3,13 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Analytics from './Analytics'
-import type { AnalyticsSummary, DepartmentWorkload, DistributionData, SlaMetrics } from '@/lib/analytics'
+import type {
+  AnalyticsSummary,
+  BottlenecksData,
+  DepartmentWorkload,
+  DistributionData,
+  SlaMetrics,
+} from '@/lib/analytics'
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -67,6 +73,28 @@ function makeDistribution(overrides: Partial<DistributionData> = {}): Distributi
   }
 }
 
+// The default is deliberately all-zero/null/empty (renders each of the 4
+// bottleneck sections in their "Henüz veri yok" empty state, a successful --
+// not errored -- render). This is used as filler data for the 18 pre-existing
+// 2A/2B tests fixed for the new 5th query below, so it must never introduce
+// any text or table that could collide with those tests' own scoped-to-2A/2B
+// assertions (e.g. a stray "IT" department label, or a second `role="table"`
+// competing with a `queryByRole('table')` check). Tests that actually exercise
+// bottleneck rendering pass their own explicit overrides.
+function makeBottlenecks(overrides: Partial<BottlenecksData> = {}): BottlenecksData {
+  return {
+    slaBreachByDepartment: [],
+    slaBreachByRequestType: [],
+    stageDurations: [
+      { stage: 'OPEN_TO_ASSIGNED', avg_hours: null },
+      { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: null },
+      { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+    ],
+    authorityWorkload: [],
+    ...overrides,
+  }
+}
+
 // "Açık" is used both as the summary "OPEN" stat label and as the workload
 // table's "Açık" column header, so unscoped text queries collide once both
 // sections have rendered -- scope summary assertions to its own card.
@@ -102,6 +130,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -141,6 +170,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla({ compliance_rate: 87, avg_resolution_hours: 5.5 })))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -157,6 +187,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -183,6 +214,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -205,6 +237,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(errorResponse(500, 'Sunucu hatası'))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -226,6 +259,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, { compliance_rate: 0, avg_resolution_hours: null }))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -242,6 +276,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, { compliance_rate: 0, avg_resolution_hours: 2.5 }))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -262,6 +297,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -279,6 +315,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -297,6 +334,7 @@ describe('Analytics page', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, []))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -328,6 +366,7 @@ describe('distribution charts (Analytics 2B)', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -375,6 +414,7 @@ describe('distribution charts (Analytics 2B)', () => {
           }),
         ),
       )
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -412,6 +452,7 @@ describe('distribution charts (Analytics 2B)', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     const { container } = renderAnalytics()
 
@@ -433,6 +474,7 @@ describe('distribution charts (Analytics 2B)', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -467,6 +509,7 @@ describe('distribution charts (Analytics 2B)', () => {
       .mockResolvedValueOnce(jsonResponse(200, makeSla()))
       .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
       .mockResolvedValueOnce(errorResponse(500, 'Dağılım sunucu hatası'))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -507,6 +550,7 @@ describe('distribution charts (Analytics 2B)', () => {
           }),
         ),
       )
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -533,6 +577,7 @@ describe('distribution charts (Analytics 2B)', () => {
           }),
         ),
       )
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -555,6 +600,7 @@ describe('distribution charts (Analytics 2B)', () => {
           resolveDistribution = resolve
         }),
       )
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
 
     renderAnalytics()
 
@@ -564,5 +610,322 @@ describe('distribution charts (Analytics 2B)', () => {
 
     resolveDistribution(jsonResponse(200, makeDistribution()))
     await waitFor(() => expect(within(statusCard).queryByText('Yükleniyor...')).not.toBeInTheDocument())
+  })
+})
+
+describe('bottlenecks (Analytics 2C)', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function getCardByTitle(title: string) {
+    return screen.getByText(title).closest('div[data-slot="card"]') as HTMLElement
+  }
+
+  // AC1: opening the page fires a GET to /api/analytics/bottlenecks (no query params)
+  it('fetches the bottlenecks endpoint once on mount', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('SLA İhlalleri (Departman)')).toBeInTheDocument())
+
+    const bottlenecksCalls = vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).includes('/api/analytics/bottlenecks'))
+    expect(bottlenecksCalls).toHaveLength(1)
+    expect(String(bottlenecksCalls[0][0])).not.toContain('?')
+  })
+
+  // AC2: slaBreachByDepartment and slaBreachByRequestType each render as a bar
+  // chart with their data-derived labels visible. One entry per dataset, per
+  // the same jsdom/recharts multi-tick limitation documented above for the 2B
+  // categorical charts.
+  it('renders slaBreachByDepartment and slaBreachByRequestType charts with their data-derived labels', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            slaBreachByDepartment: [{ department: 'Muhasebe', count: 4 }],
+            slaBreachByRequestType: [{ requestType: 'Donanım', count: 6 }],
+          }),
+        ),
+      )
+
+    renderAnalytics()
+
+    const deptCard = await screen.findByText('SLA İhlalleri (Departman)').then(
+      (el) => el.closest('div[data-slot="card"]') as HTMLElement,
+    )
+    await waitFor(() => expect(within(deptCard).getByText('Muhasebe')).toBeInTheDocument(), {
+      timeout: 3000,
+    })
+
+    const typeCard = getCardByTitle('SLA İhlalleri (Talep Türü)')
+    await waitFor(() => expect(within(typeCard).getByText('Donanım')).toBeInTheDocument(), {
+      timeout: 3000,
+    })
+  })
+
+  // AC3a: all 3 stages non-null -> the "Aşama Süreleri" chart renders (proven
+  // via .recharts-responsive-container presence, per the same jsdom-limitation
+  // precedent as the 3-stage horizontal bar chart's simultaneous labels)
+  it('renders the stage-durations chart when all 3 stages have non-null avg_hours', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            stageDurations: [
+              { stage: 'OPEN_TO_ASSIGNED', avg_hours: 1 },
+              { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: 8 },
+              { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: 3 },
+            ],
+          }),
+        ),
+      )
+
+    const { container } = renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('Aşama Süreleri')).toBeInTheDocument())
+    const stageCard = getCardByTitle('Aşama Süreleri')
+    await waitFor(() =>
+      expect(within(stageCard).queryByText('Yükleniyor...')).not.toBeInTheDocument(),
+    )
+    expect(within(stageCard).queryByText('Henüz veri yok')).not.toBeInTheDocument()
+    expect(container.querySelector('.recharts-responsive-container')).not.toBeNull()
+  })
+
+  // AC3b: exactly one stage null among 3 -> its "Veri yok" line appears
+  // alongside the chart section (not the full empty-state)
+  it('shows "Veri yok" for a single null stage while the other two still render as a chart', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            stageDurations: [
+              { stage: 'OPEN_TO_ASSIGNED', avg_hours: 1 },
+              { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: 8 },
+              { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+            ],
+          }),
+        ),
+      )
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('Aşama Süreleri')).toBeInTheDocument())
+    const stageCard = getCardByTitle('Aşama Süreleri')
+    await waitFor(() =>
+      expect(within(stageCard).getByText('İşlemde → Tamamlandı: Veri yok')).toBeInTheDocument(),
+    )
+    expect(within(stageCard).queryByText('Henüz veri yok')).not.toBeInTheDocument()
+  })
+
+  // AC3c: all 3 stages null -> the full empty-state renders instead of any
+  // chart or "Veri yok" lines
+  it('shows the full empty-state for stage durations when all 3 stages are null', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            stageDurations: [
+              { stage: 'OPEN_TO_ASSIGNED', avg_hours: null },
+              { stage: 'ASSIGNED_TO_IN_PROGRESS', avg_hours: null },
+              { stage: 'IN_PROGRESS_TO_COMPLETED', avg_hours: null },
+            ],
+          }),
+        ),
+      )
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('Aşama Süreleri')).toBeInTheDocument())
+    const stageCard = getCardByTitle('Aşama Süreleri')
+    await waitFor(() => expect(within(stageCard).getByText('Henüz veri yok')).toBeInTheDocument())
+    expect(stageCard.querySelector('.recharts-responsive-container')).toBeNull()
+  })
+
+  // AC4: authorityWorkload renders as a table with the exact given row order
+  // (Yetkili/Departman/Aktif Talep columns), proving no client-side re-sort
+  it('renders the authority-workload table rows in the exact order the response provided', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            authorityWorkload: [
+              { authority_name: 'Zeynep Kaya', department_name: 'IT', active_count: 7 },
+              { authority_name: 'Ahmet Yıldız', department_name: 'İK', active_count: 2 },
+              { authority_name: 'Elif Şahin', department_name: 'Muhasebe', active_count: 5 },
+            ],
+          }),
+        ),
+      )
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('Yetkili İş Yükü')).toBeInTheDocument())
+    const workloadCard = getCardByTitle('Yetkili İş Yükü')
+    const table = await waitFor(() => within(workloadCard).getByRole('table'))
+
+    expect(within(table).getByText('Yetkili')).toBeInTheDocument()
+    expect(within(table).getByText('Departman')).toBeInTheDocument()
+    expect(within(table).getByText('Aktif Talep')).toBeInTheDocument()
+
+    const rows = within(table).getAllByRole('row').slice(1) // drop header row
+    expect(rows.map((row) => within(row).getAllByRole('cell').map((c) => c.textContent))).toEqual([
+      ['Zeynep Kaya', 'IT', '7'],
+      ['Ahmet Yıldız', 'İK', '2'],
+      ['Elif Şahin', 'Muhasebe', '5'],
+    ])
+  })
+
+  // AC5: bottlenecks fetch failure shows exactly one alert card titled
+  // "Darboğazlar" with a retry button, while the pre-existing sections (2A's
+  // three, 2B's five) still render their own successful data
+  it('shows a single "Darboğazlar" error card on bottlenecks failure while other sections still render', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(errorResponse(500, 'Darboğaz sunucu hatası'))
+
+    renderAnalytics()
+
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toHaveTextContent('Darboğaz sunucu hatası')
+
+    const bottlenecksCard = getCardByTitle('Darboğazlar')
+    expect(within(bottlenecksCard).getByRole('button', { name: 'Tekrar Dene' })).toBeInTheDocument()
+
+    // the 4 new sections don't render at all when bottlenecks errored
+    expect(screen.queryByText('SLA İhlalleri (Departman)')).not.toBeInTheDocument()
+    expect(screen.queryByText('SLA İhlalleri (Talep Türü)')).not.toBeInTheDocument()
+    expect(screen.queryByText('Aşama Süreleri')).not.toBeInTheDocument()
+    expect(screen.queryByText('Yetkili İş Yükü')).not.toBeInTheDocument()
+
+    // pre-existing sections rendered their own successful data
+    await waitFor(() => expect(within(getSummaryCard()).getByText('Açık')).toBeInTheDocument())
+    expect(screen.getByText('%87')).toBeInTheDocument()
+    expect(screen.getByText('IT')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Durum Dağılımı')).toBeInTheDocument())
+  })
+
+  // AC6: all-zero/empty datasets show the "Henüz veri yok" empty state
+  // instead of a chart/table -- covers slaBreachByDepartment all-zero and
+  // authorityWorkload empty (stageDurations all-null is covered by AC3c above)
+  it('shows "Henüz veri yok" for slaBreachByDepartment when all counts are zero', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          200,
+          makeBottlenecks({
+            slaBreachByDepartment: [
+              { department: 'IT', count: 0 },
+              { department: 'İK', count: 0 },
+            ],
+          }),
+        ),
+      )
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('SLA İhlalleri (Departman)')).toBeInTheDocument())
+    const deptCard = getCardByTitle('SLA İhlalleri (Departman)')
+    await waitFor(() => expect(within(deptCard).getByText('Henüz veri yok')).toBeInTheDocument())
+    expect(within(deptCard).queryByText('IT')).not.toBeInTheDocument()
+  })
+
+  it('shows "Henüz veri yok" for authorityWorkload when the list is empty', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks({ authorityWorkload: [] })))
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('Yetkili İş Yükü')).toBeInTheDocument())
+    const workloadCard = getCardByTitle('Yetkili İş Yükü')
+    await waitFor(() =>
+      expect(within(workloadCard).getByText('Henüz veri yok')).toBeInTheDocument(),
+    )
+    expect(within(workloadCard).queryByRole('table')).not.toBeInTheDocument()
+  })
+
+  // AC7: while the bottlenecks fetch is pending, the 4 new sections show
+  // "Yükleniyor..."
+  it('shows "Yükleniyor..." for the bottlenecks sections before data resolves', async () => {
+    let resolveBottlenecks: (value: Response) => void = () => {}
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          resolveBottlenecks = resolve
+        }),
+      )
+
+    renderAnalytics()
+
+    await waitFor(() => expect(screen.getByText('SLA İhlalleri (Departman)')).toBeInTheDocument())
+    const deptCard = getCardByTitle('SLA İhlalleri (Departman)')
+    const typeCard = getCardByTitle('SLA İhlalleri (Talep Türü)')
+    const stageCard = getCardByTitle('Aşama Süreleri')
+    const workloadCard = getCardByTitle('Yetkili İş Yükü')
+    expect(within(deptCard).getByText('Yükleniyor...')).toBeInTheDocument()
+    expect(within(typeCard).getByText('Yükleniyor...')).toBeInTheDocument()
+    expect(within(stageCard).getByText('Yükleniyor...')).toBeInTheDocument()
+    expect(within(workloadCard).getByText('Yükleniyor...')).toBeInTheDocument()
+
+    resolveBottlenecks(jsonResponse(200, makeBottlenecks()))
+    await waitFor(() =>
+      expect(within(deptCard).queryByText('Yükleniyor...')).not.toBeInTheDocument(),
+    )
   })
 })
