@@ -14,6 +14,7 @@ import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
 import NotFound from '@/pages/NotFound'
 import Profile from '@/pages/Profile'
+import Queue from '@/pages/Queue'
 import RequestDetail from '@/pages/RequestDetail'
 import Requests from '@/pages/Requests'
 
@@ -55,7 +56,7 @@ function App() {
                     <Route path="/requests/new" element={<NewRequest />} />
                     <Route path="/requests/:id" element={<RequestDetail />} />
                     <Route path="/profile" element={<Profile />} />
-                    <Route path="/queue" element={<ComingSoon title="Kuyruk" />} />
+                    <Route path="/queue" element={<Queue />} />
                     <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
                   </Route>
                 </Route>

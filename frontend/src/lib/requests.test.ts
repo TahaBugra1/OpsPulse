@@ -10,6 +10,7 @@ import {
   useChangeRequestStatus,
   useClaimRequest,
   useCreateRequest,
+  useOpenQueue,
   useRequest,
   useRequestComments,
   useRequests,
@@ -233,5 +234,24 @@ describe('requests lib', () => {
     expect(String(url)).toContain('/api/requests/r1/comments')
     expect(options?.method).toBe('POST')
     expect(JSON.parse(options?.body as string)).toEqual({ content: 'test' })
+  })
+
+  // AC1 (realtime-queue-claim): useOpenQueue() calls GET /api/requests?status=OPEN
+  // and returns the array reversed relative to what fetch returned (FIFO
+  // client-side reversal of the backend's DESC order).
+  it('useOpenQueue calls GET /api/requests?status=OPEN and returns the list reversed', async () => {
+    const newest = { id: 'r3', request_number: 3 }
+    const middle = { id: 'r2', request_number: 2 }
+    const oldest = { id: 'r1', request_number: 1 }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [newest, middle, oldest]))
+
+    const { result } = renderHook(() => useOpenQueue(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual([oldest, middle, newest])
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/requests?status=OPEN')
+    expect(options?.method).toBe('GET')
   })
 })

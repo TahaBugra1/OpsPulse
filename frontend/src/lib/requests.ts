@@ -1,6 +1,6 @@
 // Request list/detail data layer: types, Turkish label mappings, and
 // TanStack Query hooks (reads plus the request creation/claim/status/
-// priority/comment mutations).
+// priority/comment mutations, and the open-requests queue read).
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiGet, apiPatch, apiPost } from './api'
@@ -126,5 +126,13 @@ export function useChangePriority(id: string) {
 export function useAddComment(id: string) {
   return useMutation({
     mutationFn: (body: { content: string }) => apiPost<unknown>(`/api/requests/${id}/comments`, body),
+  })
+}
+
+export function useOpenQueue() {
+  return useQuery({
+    queryKey: ['requests', 'queue'],
+    queryFn: () => apiGet<RequestListItem[]>('/api/requests?status=OPEN'),
+    select: (data) => [...data].reverse(),
   })
 }
