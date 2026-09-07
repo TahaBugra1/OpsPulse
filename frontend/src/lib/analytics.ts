@@ -1,6 +1,6 @@
 // Analytics data layer: read-only TanStack Query hooks for the summary,
-// SLA, and department workload endpoints (no mutations — nothing here
-// writes anything).
+// SLA, department workload, and distribution endpoints (no mutations —
+// nothing here writes anything).
 
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from './api'
@@ -46,5 +46,20 @@ export function useAnalyticsWorkload() {
   return useQuery({
     queryKey: ['analytics', 'workload'],
     queryFn: () => apiGet<DepartmentWorkload[]>('/api/analytics/workload'),
+  })
+}
+
+export interface DistributionData {
+  status: { status: string; count: number }[]
+  priority: { priority: string; count: number }[]
+  department: { department: string; count: number }[]
+  requestType: { requestType: string; count: number }[]
+  volumeOverTime: { date: string; count: number }[]
+}
+
+export function useAnalyticsDistribution(days: number) {
+  return useQuery({
+    queryKey: ['analytics', 'distribution', days],
+    queryFn: () => apiGet<DistributionData>(`/api/analytics/distribution?days=${days}`),
   })
 }

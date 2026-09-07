@@ -98,7 +98,7 @@ export function AppShell() {
   }, [socket, queryClient])
 
   return (
-    <div className="flex min-h-svh bg-background">
+    <div className="flex h-svh bg-background">
       <aside className="flex w-56 shrink-0 flex-col justify-between border-r border-sidebar-border bg-sidebar p-4">
         <div>
           <div className="mb-4 flex items-center gap-2 px-3 py-2">

@@ -1,6 +1,14 @@
 import { PackageOpen } from 'lucide-react'
+import { useState } from 'react'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, XAxis, YAxis } from 'recharts'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from '@/components/ui/chart'
 import {
   Table,
   TableBody,
@@ -9,13 +17,46 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useAnalyticsSla, useAnalyticsSummary, useAnalyticsWorkload } from '@/lib/analytics'
-import { STATUS_LABELS } from '@/lib/requests'
+import {
+  useAnalyticsDistribution,
+  useAnalyticsSla,
+  useAnalyticsSummary,
+  useAnalyticsWorkload,
+} from '@/lib/analytics'
+import { PRIORITY_LABELS, STATUS_LABELS } from '@/lib/requests'
+
+// One series per chart, so each config only needs the `count` key. The color
+// is read from the theme token — never a literal color in the JSX below.
+const STATUS_CHART_CONFIG = {
+  count: { label: 'Talep', color: 'var(--chart-1)' },
+} satisfies ChartConfig
+
+const PRIORITY_CHART_CONFIG = {
+  count: { label: 'Talep', color: 'var(--chart-2)' },
+} satisfies ChartConfig
+
+const REQUEST_TYPE_CHART_CONFIG = {
+  count: { label: 'Talep', color: 'var(--chart-3)' },
+} satisfies ChartConfig
+
+const DEPARTMENT_CHART_CONFIG = {
+  count: { label: 'Talep', color: 'var(--chart-4)' },
+} satisfies ChartConfig
+
+const VOLUME_CHART_CONFIG = {
+  count: { label: 'Talep', color: 'var(--chart-5)' },
+} satisfies ChartConfig
 
 export default function Analytics() {
   const summaryQuery = useAnalyticsSummary()
   const slaQuery = useAnalyticsSla()
   const workloadQuery = useAnalyticsWorkload()
+
+  // `days` is part of the distribution query key, so changing it refetches
+  // on its own — no manual refetch() call anywhere.
+  const [days, setDays] = useState(30)
+  const distributionQuery = useAnalyticsDistribution(days)
+  const distribution = distributionQuery.data
 
   return (
     <div className="flex flex-col gap-4">
@@ -164,6 +205,260 @@ export default function Analytics() {
           )}
         </CardContent>
       </Card>
+
+      {distributionQuery.isError && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Dağılımlar</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col items-start gap-3">
+              <p role="alert" className="text-sm font-normal text-destructive">
+                {distributionQuery.error instanceof Error
+                  ? distributionQuery.error.message
+                  : 'Dağılım verisi yüklenemedi, lütfen tekrar deneyin'}
+              </p>
+              <Button type="button" onClick={() => distributionQuery.refetch()}>
+                Tekrar Dene
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!distributionQuery.isError && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Durum Dağılımı</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {distributionQuery.isPending && (
+                <p className="text-muted-foreground">Yükleniyor...</p>
+              )}
+
+              {distribution && distribution.status.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {distribution && distribution.status.some((row) => row.count > 0) && (
+                <ChartContainer config={STATUS_CHART_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={distribution.status.map((row) => ({
+                      label: STATUS_LABELS[row.status] ?? row.status,
+                      count: row.count,
+                    }))}
+                    margin={{ top: 24 }}
+                  >
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="top" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Öncelik Dağılımı</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {distributionQuery.isPending && (
+                <p className="text-muted-foreground">Yükleniyor...</p>
+              )}
+
+              {distribution && distribution.priority.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {distribution && distribution.priority.some((row) => row.count > 0) && (
+                <ChartContainer config={PRIORITY_CHART_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={distribution.priority.map((row) => ({
+                      label: PRIORITY_LABELS[row.priority] ?? row.priority,
+                      count: row.count,
+                    }))}
+                    margin={{ top: 24 }}
+                  >
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="top" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Talep Türü Dağılımı</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {distributionQuery.isPending && (
+                <p className="text-muted-foreground">Yükleniyor...</p>
+              )}
+
+              {distribution && distribution.requestType.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {distribution && distribution.requestType.some((row) => row.count > 0) && (
+                <ChartContainer config={REQUEST_TYPE_CHART_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={distribution.requestType}
+                    layout="vertical"
+                    margin={{ right: 32 }}
+                  >
+                    <CartesianGrid horizontal={false} />
+                    <XAxis type="number" hide allowDecimals={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="requestType"
+                      tickLine={false}
+                      axisLine={false}
+                      width={140}
+                    />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="right" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Departman Dağılımı</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {distributionQuery.isPending && (
+                <p className="text-muted-foreground">Yükleniyor...</p>
+              )}
+
+              {distribution && distribution.department.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Henüz veri yok</p>
+                </div>
+              )}
+
+              {distribution && distribution.department.some((row) => row.count > 0) && (
+                <ChartContainer config={DEPARTMENT_CHART_CONFIG} className="h-64 w-full">
+                  <BarChart
+                    data={distribution.department}
+                    layout="vertical"
+                    margin={{ right: 32 }}
+                  >
+                    <CartesianGrid horizontal={false} />
+                    <XAxis type="number" hide allowDecimals={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="department"
+                      tickLine={false}
+                      axisLine={false}
+                      width={140}
+                    />
+                    <ChartTooltip content={<ChartTooltipContent />} />
+                    <Bar dataKey="count" fill="var(--color-count)" radius={4}>
+                      <LabelList dataKey="count" position="right" className="fill-foreground" />
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Zaman İçinde Hacim</CardTitle>
+              <CardAction>
+                <div className="flex gap-1">
+                  {[7, 30, 90].map((range) => (
+                    <Button
+                      key={range}
+                      type="button"
+                      size="sm"
+                      variant={days === range ? 'default' : 'outline'}
+                      aria-pressed={days === range}
+                      onClick={() => setDays(range)}
+                    >
+                      {range} gün
+                    </Button>
+                  ))}
+                </div>
+              </CardAction>
+            </CardHeader>
+            <CardContent>
+              {distributionQuery.isPending && (
+                <p className="text-muted-foreground">Yükleniyor...</p>
+              )}
+
+              {distribution && distribution.volumeOverTime.every((row) => row.count === 0) && (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <PackageOpen className="size-10" />
+                  <p>Bu aralıkta veri yok</p>
+                </div>
+              )}
+
+              {distribution && distribution.volumeOverTime.some((row) => row.count > 0) && (
+                <ChartContainer config={VOLUME_CHART_CONFIG} className="h-64 w-full">
+                  <AreaChart data={distribution.volumeOverTime} margin={{ left: 4, right: 12 }}>
+                    <defs>
+                      <linearGradient id="volumeFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-count)" stopOpacity={0.7} />
+                        <stop offset="95%" stopColor="var(--color-count)" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      minTickGap={24}
+                      tickFormatter={(value: string) => `${value.slice(8, 10)}.${value.slice(5, 7)}`}
+                    />
+                    <YAxis tickLine={false} axisLine={false} width={32} allowDecimals={false} />
+                    <ChartTooltip
+                      content={
+                        <ChartTooltipContent
+                          indicator="line"
+                          labelFormatter={(value) => String(value).split('-').reverse().join('.')}
+                        />
+                      }
+                    />
+                    <Area
+                      dataKey="count"
+                      type="natural"
+                      stroke="var(--color-count)"
+                      strokeWidth={2}
+                      fill="url(#volumeFill)"
+                    />
+                  </AreaChart>
+                </ChartContainer>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   )
 }

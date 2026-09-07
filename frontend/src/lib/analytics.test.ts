@@ -3,10 +3,32 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  useAnalyticsDistribution,
   useAnalyticsSla,
   useAnalyticsSummary,
   useAnalyticsWorkload,
 } from './analytics'
+import type { DistributionData } from './analytics'
+
+function makeDistribution(overrides: Partial<DistributionData> = {}): DistributionData {
+  return {
+    status: [
+      { status: 'OPEN', count: 3 },
+      { status: 'ASSIGNED', count: 2 },
+    ],
+    priority: [
+      { priority: 'HIGH', count: 1 },
+      { priority: 'LOW', count: 4 },
+    ],
+    department: [{ department: 'IT', count: 5 }],
+    requestType: [{ requestType: 'Donanım Arızası', count: 5 }],
+    volumeOverTime: [
+      { date: '2026-09-01', count: 2 },
+      { date: '2026-09-02', count: 3 },
+    ],
+    ...overrides,
+  }
+}
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -90,5 +112,52 @@ describe('analytics lib', () => {
     expect(result.current.data).toEqual(workload)
     const [url] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/analytics/workload')
+  })
+
+  describe('useAnalyticsDistribution', () => {
+    // AC1/AC3: calls GET /api/analytics/distribution with the given `days` value
+    // and returns the data untransformed
+    it('calls GET /api/analytics/distribution with the days param and returns the data', async () => {
+      const distribution = makeDistribution()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, distribution))
+
+      const { result } = renderHook(() => useAnalyticsDistribution(30), { wrapper: wrapper() })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(result.current.data).toEqual(distribution)
+      const [url, options] = vi.mocked(fetch).mock.calls[0]
+      expect(String(url)).toContain('/api/analytics/distribution')
+      expect(String(url)).toContain('days=30')
+      expect(options?.method).toBe('GET')
+    })
+
+    // AC3: changing `days` changes the query key, triggering a new fetch with
+    // the new value in the URL (no manual refetch() call needed)
+    it('refetches with the new days value when the days argument changes', async () => {
+      const initial = makeDistribution()
+      const updated = makeDistribution({ department: [{ department: 'İK', count: 9 }] })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, initial))
+        .mockResolvedValueOnce(jsonResponse(200, updated))
+
+      const { result, rerender } = renderHook(({ days }) => useAnalyticsDistribution(days), {
+        wrapper: wrapper(),
+        initialProps: { days: 30 },
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toEqual(initial)
+
+      rerender({ days: 7 })
+
+      await waitFor(() => expect(result.current.data).toEqual(updated))
+
+      expect(vi.mocked(fetch).mock.calls).toHaveLength(2)
+      const [firstUrl] = vi.mocked(fetch).mock.calls[0]
+      const [secondUrl] = vi.mocked(fetch).mock.calls[1]
+      expect(String(firstUrl)).toContain('days=30')
+      expect(String(secondUrl)).toContain('days=7')
+    })
   })
 })
