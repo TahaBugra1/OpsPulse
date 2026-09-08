@@ -7,6 +7,7 @@ const {
   getRequestById,
   addComment,
   listComments,
+  listHistory,
 } = require('../services/requests.service');
 
 async function postCreateRequest(req, res) {
@@ -84,6 +85,15 @@ async function getComments(req, res) {
   }
 }
 
+async function getHistory(req, res) {
+  try {
+    const result = await listHistory(req.params.id, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Geçmiş getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
 module.exports = {
   postCreateRequest,
   postClaimRequest,
@@ -93,4 +103,5 @@ module.exports = {
   getRequestByIdHandler,
   postAddComment,
   getComments,
+  getHistory,
 };

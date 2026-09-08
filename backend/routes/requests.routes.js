@@ -8,6 +8,7 @@ const {
   getRequestByIdHandler,
   postAddComment,
   getComments,
+  getHistory,
 } = require('../controllers/requests.controller');
 
 const router = Router();
@@ -20,5 +21,6 @@ router.patch('/:id/status', patchRequestStatus);
 router.patch('/:id/priority', patchRequestPriority);
 router.post('/:id/comments', postAddComment);
 router.get('/:id/comments', getComments);
+router.get('/:id/history', getHistory);
 
 module.exports = router;

@@ -367,6 +367,14 @@ const COMMENT_SELECT = `
   JOIN users author ON author.id = c.author_id
 `;
 
+const HISTORY_SELECT = `
+  SELECT
+    h.*,
+    TRIM(CONCAT(actor.name, ' ', COALESCE(actor.surname, ''))) AS actor_name
+  FROM request_history h
+  JOIN users actor ON actor.id = h.actor_id
+`;
+
 const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
 
 async function listRequests(query, user) {
@@ -514,6 +522,22 @@ async function listComments(requestId, user) {
   return result.rows;
 }
 
+async function listHistory(requestId, user) {
+  await getRequestById(requestId, user);
+
+  let result;
+  try {
+    result = await pool.query(
+      `${HISTORY_SELECT} WHERE h.request_id = $1 ORDER BY h.created_at ASC`,
+      [requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Geçmiş getirilemedi, lütfen tekrar deneyin');
+  }
+
+  return result.rows;
+}
+
 async function listRequestTypes() {
   let result;
   try {
@@ -535,5 +559,6 @@ module.exports = {
   getRequestById,
   addComment,
   listComments,
+  listHistory,
   listRequestTypes,
 };

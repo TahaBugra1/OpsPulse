@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api'
 import {
   PRIORITY_LABELS,
   type RequestComment,
+  type RequestHistoryEntry,
   type RequestListItem,
   STATUS_LABELS,
   useAddComment,
@@ -30,6 +31,7 @@ import {
   useClaimRequest,
   useRequest,
   useRequestComments,
+  useRequestHistory,
 } from '@/lib/requests'
 import {
   commentSchema,
@@ -41,6 +43,27 @@ import {
 const SELECT_CLASSES =
   'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40'
 
+function formatHistoryEntry(entry: RequestHistoryEntry): string {
+  if (entry.action === 'CREATED') {
+    return `${entry.actor_name} talebi oluşturdu.`
+  }
+  if (entry.action === 'STATUS_CHANGED') {
+    const oldLabel = STATUS_LABELS[entry.old_value ?? ''] ?? entry.old_value
+    const newLabel = STATUS_LABELS[entry.new_value ?? ''] ?? entry.new_value
+    const base = `${entry.actor_name} durumu ${oldLabel}'dan ${newLabel}'a değiştirdi.`
+    if (entry.new_value === 'REJECTED' && entry.note) {
+      return `${base} Sebep: ${entry.note}`
+    }
+    return base
+  }
+  if (entry.action === 'PRIORITY_CHANGED') {
+    const oldLabel = PRIORITY_LABELS[entry.old_value ?? ''] ?? entry.old_value
+    const newLabel = PRIORITY_LABELS[entry.new_value ?? ''] ?? entry.new_value
+    return `${entry.actor_name} önceliği ${oldLabel}'dan ${newLabel}'a değiştirdi.`
+  }
+  return `${entry.actor_name}: ${entry.action}`
+}
+
 export default function RequestDetail() {
   const { id } = useParams<{ id: string }>()
   const requestId = id ?? ''
@@ -48,6 +71,7 @@ export default function RequestDetail() {
   const queryClient = useQueryClient()
   const requestQuery = useRequest(requestId)
   const commentsQuery = useRequestComments(requestId)
+  const historyQuery = useRequestHistory(requestId)
   const socket = useSocket()
 
   const claimMutation = useClaimRequest(requestId)
@@ -376,6 +400,38 @@ export default function RequestDetail() {
                       Gönder
                     </Button>
                   </form>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <h3 className="text-base font-medium">Geçmiş</h3>
+                {historyQuery.isPending && <p className="text-sm text-muted-foreground">Yükleniyor...</p>}
+                {historyQuery.isError && (
+                  <div className="flex flex-col items-start gap-3">
+                    <p role="alert" className="text-sm font-normal text-destructive">
+                      {historyQuery.error instanceof Error ? historyQuery.error.message : 'Geçmiş getirilemedi, lütfen tekrar deneyin'}
+                    </p>
+                    <Button type="button" onClick={() => historyQuery.refetch()}>
+                      Tekrar Dene
+                    </Button>
+                  </div>
+                )}
+                {historyQuery.data && historyQuery.data.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Henüz geçmiş kaydı yok</p>
+                )}
+                {historyQuery.data && historyQuery.data.length > 0 && (
+                  <ul className="flex flex-col gap-3">
+                    {historyQuery.data.map((entry) => (
+                      <li key={entry.id} className="rounded-md border p-3 text-sm">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span>{formatHistoryEntry(entry)}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(entry.created_at).toLocaleString('tr-TR')}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
 

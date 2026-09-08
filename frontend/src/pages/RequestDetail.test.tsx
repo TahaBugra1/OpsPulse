@@ -7,7 +7,7 @@ import RequestDetail from './RequestDetail'
 import { AuthProvider } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import type { AuthUser } from '@/lib/authStorage'
-import type { RequestComment, RequestListItem } from '@/lib/requests'
+import type { RequestComment, RequestHistoryEntry, RequestListItem } from '@/lib/requests'
 
 // Real socket.io-client is mocked so no actual WebSocket connection is
 // attempted in jsdom — SocketProvider calls createSocket()/io() for real
@@ -88,6 +88,21 @@ function makeComment(overrides: Partial<RequestComment> = {}): RequestComment {
   }
 }
 
+function makeHistoryEntry(overrides: Partial<RequestHistoryEntry> = {}): RequestHistoryEntry {
+  return {
+    id: 'h1',
+    request_id: 'uuid-1111-2222',
+    actor_id: 'user-1',
+    action: 'CREATED',
+    old_value: null,
+    new_value: 'OPEN',
+    note: null,
+    created_at: '2026-09-03T09:00:00.000Z',
+    actor_name: 'Taha',
+    ...overrides,
+  }
+}
+
 // EMPLOYEE who created the default makeRequest() request (created_by: 'user-1').
 // A plain EMPLOYEE-as-creator has zero action-button visibility (no claim/start/
 // complete/reject/priority-change apply), so this is the safe default for tests
@@ -159,6 +174,7 @@ describe('RequestDetail page', () => {
             resolveComments = resolve
           }),
       )
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -177,6 +193,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, request))
       .mockResolvedValueOnce(jsonResponse(200, comments))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -211,6 +228,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
       .mockResolvedValueOnce(jsonResponse(200, [makeComment()]))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -231,6 +249,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
       .mockResolvedValueOnce(jsonResponse(200, []))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -241,6 +260,7 @@ describe('RequestDetail page', () => {
   it('renders the error message and retry button when the request query fails, without leaking any request content', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(errorResponse(404, 'Talep bulunamadı'))
+      .mockResolvedValueOnce(jsonResponse(200, []))
       .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
@@ -256,6 +276,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(errorResponse(403, 'Bu işlem için yetkiniz yok'))
       .mockResolvedValueOnce(jsonResponse(200, []))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -267,6 +288,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
       .mockResolvedValueOnce(errorResponse(500, 'Sunucu hatası'))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -280,6 +302,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(errorResponse(500, 'Sunucu hatası'))
       .mockResolvedValueOnce(jsonResponse(200, []))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -292,13 +315,14 @@ describe('RequestDetail page', () => {
     await user.click(retryButton)
 
     await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
-    expect(fetch).toHaveBeenCalledTimes(4)
+    expect(fetch).toHaveBeenCalledTimes(5)
   })
 
   // AC8: "Gecikmiş" badge shown on the detail page when is_overdue is true
   it('shows the "Gecikmiş" badge when the request is overdue', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest({ is_overdue: true })))
+      .mockResolvedValueOnce(jsonResponse(200, []))
       .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
@@ -311,6 +335,7 @@ describe('RequestDetail page', () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest({ is_overdue: false })))
       .mockResolvedValueOnce(jsonResponse(200, []))
+      .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
 
@@ -322,6 +347,7 @@ describe('RequestDetail page', () => {
   it('renders "-" for assigned_to_name when the request is unassigned', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse(200, makeRequest({ assigned_to: null, assigned_to_name: null, status: 'OPEN' })))
+      .mockResolvedValueOnce(jsonResponse(200, []))
       .mockResolvedValueOnce(jsonResponse(200, []))
 
     renderDetail()
@@ -349,6 +375,7 @@ describe('RequestDetail page', () => {
         const u = String(url)
         const method = (init?.method as string | undefined) ?? 'GET'
         if (method === 'GET' && u.endsWith('/comments')) return jsonResponse(200, comments)
+        if (method === 'GET' && u.endsWith('/history')) return jsonResponse(200, [])
         if (method === 'GET') return jsonResponse(200, current)
         if (method === 'POST' && u.endsWith('/assign')) {
           current = { ...current, status: 'ASSIGNED', assigned_to: 'authority-1', assigned_to_name: 'Authority One' }
@@ -377,6 +404,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', assigned_to: null, assigned_to_name: null })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(fakeUser)
 
@@ -387,6 +415,7 @@ describe('RequestDetail page', () => {
     it('does not show "Üstlen" for a DEPARTMENT_AUTHORITY of a different department', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', assigned_to: null, assigned_to_name: null })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(authorityDept2)
@@ -410,6 +439,7 @@ describe('RequestDetail page', () => {
         const u = String(url)
         const method = (init?.method as string | undefined) ?? 'GET'
         if (method === 'GET' && u.endsWith('/comments')) return jsonResponse(200, comments)
+        if (method === 'GET' && u.endsWith('/history')) return jsonResponse(200, [])
         if (method === 'GET') return jsonResponse(200, current)
         if (method === 'PATCH' && u.endsWith('/status')) {
           const body = JSON.parse(init?.body as string)
@@ -439,6 +469,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'ASSIGNED', assigned_to: 'user-2' })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(otherAuthoritySameDept)
 
@@ -460,6 +491,7 @@ describe('RequestDetail page', () => {
         const u = String(url)
         const method = (init?.method as string | undefined) ?? 'GET'
         if (method === 'GET' && u.endsWith('/comments')) return jsonResponse(200, comments)
+        if (method === 'GET' && u.endsWith('/history')) return jsonResponse(200, [])
         if (method === 'GET') return jsonResponse(200, current)
         if (method === 'PATCH' && u.endsWith('/status')) {
           const body = JSON.parse(init?.body as string)
@@ -498,6 +530,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', assigned_to: null, assigned_to_name: null })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(authorityDept1)
 
@@ -507,6 +540,7 @@ describe('RequestDetail page', () => {
     it('only shows "Reddet" for the assignee (not another DEPARTMENT_AUTHORITY of the same department) on an ASSIGNED/IN_PROGRESS request', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'ASSIGNED', assigned_to: 'user-2' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(authorityDept1)
@@ -519,6 +553,7 @@ describe('RequestDetail page', () => {
       const user = userEvent.setup()
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'ASSIGNED', assigned_to: 'user-2' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(assignee)
@@ -534,6 +569,7 @@ describe('RequestDetail page', () => {
       const user = userEvent.setup()
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'ASSIGNED', assigned_to: 'user-2' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(assignee)
@@ -559,6 +595,7 @@ describe('RequestDetail page', () => {
         const u = String(url)
         const method = (init?.method as string | undefined) ?? 'GET'
         if (method === 'GET' && u.endsWith('/comments')) return jsonResponse(200, comments)
+        if (method === 'GET' && u.endsWith('/history')) return jsonResponse(200, [])
         if (method === 'GET') return jsonResponse(200, current)
         if (method === 'PATCH' && u.endsWith('/status')) {
           const body = JSON.parse(init?.body as string)
@@ -607,6 +644,7 @@ describe('RequestDetail page', () => {
         const u = String(url)
         const method = (init?.method as string | undefined) ?? 'GET'
         if (method === 'GET' && u.endsWith('/comments')) return jsonResponse(200, comments)
+        if (method === 'GET' && u.endsWith('/history')) return jsonResponse(200, [])
         if (method === 'GET') return jsonResponse(200, current)
         if (method === 'PATCH' && u.endsWith('/priority')) {
           const body = JSON.parse(init?.body as string)
@@ -642,6 +680,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(admin)
 
@@ -653,6 +692,7 @@ describe('RequestDetail page', () => {
       const user = userEvent.setup()
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
@@ -666,13 +706,13 @@ describe('RequestDetail page', () => {
 
       await user.click(screen.getByRole('button', { name: 'Gönder' }))
 
-      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
-      const [url, options] = vi.mocked(fetch).mock.calls[2]
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5))
+      const [url, options] = vi.mocked(fetch).mock.calls[3]
       expect(String(url)).toContain('/api/requests/uuid-1111-2222/comments')
       expect(options?.method).toBe('POST')
       expect(JSON.parse(options?.body as string)).toEqual({ content: 'Merhaba' })
 
-      const refetchUrl = String(vi.mocked(fetch).mock.calls[3][0])
+      const refetchUrl = String(vi.mocked(fetch).mock.calls[4][0])
       expect(refetchUrl.endsWith('/api/requests/uuid-1111-2222/comments')).toBe(true)
 
       await waitFor(() => expect(screen.getByLabelText('Yorum Ekle')).toHaveValue(''))
@@ -682,6 +722,7 @@ describe('RequestDetail page', () => {
       const user = userEvent.setup()
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
@@ -706,6 +747,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', assigned_to: null, assigned_to_name: null })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(authorityDept1)
 
@@ -720,8 +762,8 @@ describe('RequestDetail page', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Bu talep zaten üstlenildi')
 
       // 409 triggers an explicit extra GET of the request (AC7 refetch-on-409 behavior)
-      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
-      const refetchUrl = String(vi.mocked(fetch).mock.calls[3][0])
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5))
+      const refetchUrl = String(vi.mocked(fetch).mock.calls[4][0])
       expect(refetchUrl.endsWith('/api/requests/uuid-1111-2222')).toBe(true)
     })
 
@@ -730,6 +772,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', assigned_to: null, assigned_to_name: null })))
         .mockResolvedValueOnce(jsonResponse(200, [makeComment()]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(authorityDept1)
 
@@ -744,8 +787,8 @@ describe('RequestDetail page', () => {
       // page did not crash: other content (the comments list) is still visible
       expect(screen.getByText('Durum nedir?')).toBeInTheDocument()
 
-      // no extra refetch on a non-409 failure: exactly the 2 initial GETs + the failed POST
-      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+      // no extra refetch on a non-409 failure: exactly the 3 initial GETs + the failed POST
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
     })
   })
 
@@ -757,6 +800,7 @@ describe('RequestDetail page', () => {
     it('shows no action buttons or priority select for a COMPLETED request, even for the former assignee, while the comment form remains', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'COMPLETED', assigned_to: 'user-2' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(assignee)
@@ -775,6 +819,7 @@ describe('RequestDetail page', () => {
     it('shows no action buttons or priority select for a REJECTED request, even for the former assignee', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'REJECTED', assigned_to: 'user-2' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(assignee)
@@ -799,6 +844,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
 
@@ -810,6 +856,7 @@ describe('RequestDetail page', () => {
     it('applies a request:updated event directly to the cache without an extra fetch', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ status: 'OPEN', priority: 'LOW' })))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
@@ -833,6 +880,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
         .mockResolvedValueOnce(jsonResponse(200, [makeComment()]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
 
@@ -853,6 +901,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
         .mockResolvedValueOnce(jsonResponse(200, [existing]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
 
@@ -868,6 +917,7 @@ describe('RequestDetail page', () => {
     it('rejoins the room when the socket reconnects', async () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
         .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail()
@@ -891,6 +941,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       const { unmount } = renderDetail()
 
@@ -913,6 +964,7 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ id: 'uuid-1111-2222' })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       const first = renderDetail(fakeUser, 'uuid-1111-2222')
       await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
@@ -925,10 +977,156 @@ describe('RequestDetail page', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(jsonResponse(200, makeRequest({ id: 'uuid-3333-4444' })))
         .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
 
       renderDetail(fakeUser, 'uuid-3333-4444')
       await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
       expect(mockSocket.emit).toHaveBeenCalledWith('join:request', 'uuid-3333-4444')
+    })
+  })
+
+  // ── History section ("Geçmiş") ──────────────────────────────────────────
+  // The history query has its own independent isPending/isError, separate
+  // from the page's top-level isPending/isError (which still only combines
+  // requestQuery + commentsQuery). A history failure must never hide the
+  // request details/actions/comments above it, and vice versa.
+
+  describe('history section', () => {
+    it('renders history entries as formatted Turkish sentences in API order', async () => {
+      const history = [
+        makeHistoryEntry({ id: 'h1', action: 'CREATED', old_value: null, new_value: 'OPEN', actor_name: 'Taha' }),
+        makeHistoryEntry({
+          id: 'h2',
+          action: 'STATUS_CHANGED',
+          old_value: 'OPEN',
+          new_value: 'ASSIGNED',
+          actor_name: 'Ahmet',
+          note: null,
+        }),
+        makeHistoryEntry({
+          id: 'h3',
+          action: 'PRIORITY_CHANGED',
+          old_value: 'LOW',
+          new_value: 'HIGH',
+          actor_name: 'Ahmet',
+        }),
+      ]
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, history))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Geçmiş')).toBeInTheDocument())
+
+      expect(screen.getByText('Taha talebi oluşturdu.')).toBeInTheDocument()
+      expect(screen.getByText("Ahmet durumu Açık'dan Atandı'a değiştirdi.")).toBeInTheDocument()
+      expect(screen.getByText("Ahmet önceliği Düşük'dan Yüksek'a değiştirdi.")).toBeInTheDocument()
+
+      // Rendered in the order the API returned them (no client resort).
+      const items = screen.getAllByRole('listitem')
+      const historyTexts = items.map((el) => el.textContent ?? '')
+      const createdIdx = historyTexts.findIndex((t) => t.includes('talebi oluşturdu'))
+      const statusIdx = historyTexts.findIndex((t) => t.includes('durumu Açık'))
+      const priorityIdx = historyTexts.findIndex((t) => t.includes('önceliği Düşük'))
+      expect(createdIdx).toBeGreaterThanOrEqual(0)
+      expect(createdIdx).toBeLessThan(statusIdx)
+      expect(statusIdx).toBeLessThan(priorityIdx)
+    })
+
+    it('renders "Henüz geçmiş kaydı yok" when history is empty', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Henüz geçmiş kaydı yok')).toBeInTheDocument())
+    })
+
+    it('renders the "Sebep: ..." suffix only for a REJECTED entry with a note', async () => {
+      const history = [
+        makeHistoryEntry({
+          id: 'h1',
+          action: 'STATUS_CHANGED',
+          old_value: 'IN_PROGRESS',
+          new_value: 'REJECTED',
+          note: 'Stok yok',
+          actor_name: 'Ahmet',
+        }),
+        makeHistoryEntry({
+          id: 'h2',
+          action: 'STATUS_CHANGED',
+          old_value: 'OPEN',
+          new_value: 'ASSIGNED',
+          note: null,
+          actor_name: 'Ahmet',
+        }),
+      ]
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, history))
+
+      renderDetail()
+
+      expect(
+        await screen.findByText("Ahmet durumu İşlemde'dan Reddedildi'a değiştirdi. Sebep: Stok yok"),
+      ).toBeInTheDocument()
+      expect(screen.getByText("Ahmet durumu Açık'dan Atandı'a değiştirdi.")).toBeInTheDocument()
+      expect(screen.queryByText(/Sebep: Stok yok.*Sebep/)).not.toBeInTheDocument()
+    })
+
+    // The key isolation test: a history-fetch failure must not hide the
+    // request details/actions/comments above it, and shows its own
+    // independent error UI with its own retry that refetches only history.
+    it('shows the request/comments content fully even when only the history query fails, with an isolated error + retry', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [makeComment()]))
+        .mockResolvedValueOnce(errorResponse(500, 'Geçmiş getirilemedi, lütfen tekrar deneyin'))
+
+      renderDetail()
+
+      // Top-level content (request details, Yorumlar, comments) renders fully.
+      await waitFor(() => expect(screen.getByText('Yorumlar')).toBeInTheDocument())
+      expect(screen.getByText(/#42 — Yazıcı bozuldu/)).toBeInTheDocument()
+      expect(screen.getByText('Durum nedir?')).toBeInTheDocument()
+
+      // Exactly one alert + one retry button exist (history's own, since the
+      // top-level error UI never renders when request/comments both succeed).
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('Geçmiş getirilemedi, lütfen tekrar deneyin')
+      const retryButtons = screen.getAllByRole('button', { name: 'Tekrar Dene' })
+      expect(retryButtons.length).toBe(1)
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeHistoryEntry()]))
+
+      await user.click(retryButtons[0])
+
+      // Clicking history's retry re-fetches ONLY the history endpoint.
+      await waitFor(() => expect(screen.getByText('Taha talebi oluşturdu.')).toBeInTheDocument())
+      const lastCall = vi.mocked(fetch).mock.calls[vi.mocked(fetch).mock.calls.length - 1]
+      expect(String(lastCall[0]).endsWith('/history')).toBe(true)
+    })
+
+    // The converse: a request failure preserves the existing top-level error
+    // behavior regardless of what history/comments would have returned.
+    it('still shows the top-level error UI when the request query fails, regardless of history', async () => {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(errorResponse(404, 'Talep bulunamadı'))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Talep bulunamadı')
+      expect(screen.getByRole('button', { name: 'Tekrar Dene' })).toBeInTheDocument()
+      expect(screen.queryByText('Yorumlar')).not.toBeInTheDocument()
+      expect(screen.queryByText('Geçmiş')).not.toBeInTheDocument()
     })
   })
 })

@@ -41,6 +41,18 @@ export interface RequestComment {
   author_name: string
 }
 
+export interface RequestHistoryEntry {
+  id: string
+  request_id: string
+  actor_id: string
+  action: 'CREATED' | 'STATUS_CHANGED' | 'PRIORITY_CHANGED'
+  old_value: string | null
+  new_value: string | null
+  note: string | null
+  created_at: string
+  actor_name: string
+}
+
 export const STATUS_LABELS: Record<string, string> = {
   OPEN: 'Açık',
   ASSIGNED: 'Atandı',
@@ -80,6 +92,14 @@ export function useRequestComments(id: string) {
   return useQuery({
     queryKey: ['requests', id, 'comments'],
     queryFn: () => apiGet<RequestComment[]>(`/api/requests/${id}/comments`),
+    enabled: !!id,
+  })
+}
+
+export function useRequestHistory(id: string) {
+  return useQuery({
+    queryKey: ['requests', id, 'history'],
+    queryFn: () => apiGet<RequestHistoryEntry[]>(`/api/requests/${id}/history`),
     enabled: !!id,
   })
 }
