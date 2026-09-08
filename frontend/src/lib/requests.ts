@@ -1,9 +1,10 @@
 // Request list/detail data layer: types, Turkish label mappings, and
 // TanStack Query hooks (reads plus the request creation/claim/status/
-// priority/comment mutations, and the open-requests queue read).
+// priority/comment mutations, the open-requests queue read, and the queue's
+// bulk claim/reject mutation).
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { apiGet, apiPatch, apiPost } from './api'
+import { ApiError, apiGet, apiPatch, apiPost } from './api'
 
 export interface RequestListItem {
   id: string
@@ -168,5 +169,47 @@ export function useOpenQueue(filters: QueueFilters = {}) {
       return apiGet<RequestListItem[]>(`/api/requests?${params.toString()}`)
     },
     select: (data) => [...data].reverse(),
+  })
+}
+
+export interface BulkQueueActionResult {
+  succeeded: number
+  conflicted: number
+  failed: number
+}
+
+// There is no bulk endpoint by design: this loops the existing per-request
+// endpoints one at a time (never in parallel) and swallows each item's error
+// so a single failure - typically a 409 from another authority claiming the
+// row first - does not stop the remaining ids.
+export function useBulkQueueAction() {
+  return useMutation({
+    mutationFn: async ({
+      ids,
+      action,
+      note,
+    }: {
+      ids: string[]
+      action: 'CLAIM' | 'REJECT'
+      note?: string
+    }) => {
+      const result: BulkQueueActionResult = { succeeded: 0, conflicted: 0, failed: 0 }
+
+      for (const id of ids) {
+        try {
+          if (action === 'CLAIM') {
+            await apiPost<unknown>(`/api/requests/${id}/assign`)
+          } else {
+            await apiPatch<unknown>(`/api/requests/${id}/status`, { status: 'REJECTED', note })
+          }
+          result.succeeded += 1
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) result.conflicted += 1
+          else result.failed += 1
+        }
+      }
+
+      return result
+    },
   })
 }

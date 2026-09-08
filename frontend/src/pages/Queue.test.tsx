@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Queue from './Queue'
 import { AuthProvider } from '@/context/AuthContext'
@@ -37,6 +38,12 @@ const { mockSocket, mockIo } = vi.hoisted(() => {
 })
 
 vi.mock('socket.io-client', () => ({ io: mockIo }))
+
+// renderQueue() mounts only <Queue />, never <Toaster />, so a real sonner
+// toast never reaches the DOM here. Queue.tsx is the only consumer of sonner
+// in this file's render tree, so mocking the module wholesale is safe and lets
+// the bulk-summary wording be asserted directly on the call arguments.
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -139,6 +146,8 @@ describe('Queue page', () => {
     mockSocket.disconnect.mockClear()
     mockSocket.__listeners.clear()
     mockIo.mockClear()
+    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.error).mockClear()
   })
 
   afterEach(() => {
@@ -638,5 +647,243 @@ describe('Queue page', () => {
 
     const typeSelect = screen.getByLabelText('Talep Tipi')
     expect(within(typeSelect).getByRole('option', { name: 'Diğer Departman Tipi' })).toBeInTheDocument()
+  })
+
+  // ---------------------------------------------------------------------
+  // Bulk claim/reject — queue-bulk-actions task
+  // ---------------------------------------------------------------------
+
+  // Two rows the bulk tests select against. The queue GET is mocked
+  // newest-first (DESC), so #1 renders first and #2 second.
+  const bulkRow1 = makeRequest({ id: 'bulk-1', request_number: 1, title: 'Birinci' })
+  const bulkRow2 = makeRequest({ id: 'bulk-2', request_number: 2, title: 'İkinci' })
+
+  async function renderQueueWithTwoRows() {
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [bulkRow2, bulkRow1]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+  }
+
+  function statusCalls() {
+    return vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/status'))
+  }
+
+  function assignCalls() {
+    return vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/assign'))
+  }
+
+  // AC5: the bulk bar only exists while at least one row is selected.
+  it('shows the bulk action bar only once a row is selected', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Üstlen' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Reddet' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox', { name: '#1 seç' }))
+
+    expect(await screen.findByText('1 talep seçildi')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Seçilenleri Üstlen' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Seçilenleri Reddet' })).toBeInTheDocument()
+  })
+
+  // AC6 (authorization boundary): ADMIN cannot claim or reject, so no
+  // selection affordance renders at all — not the header checkbox, not the row
+  // checkboxes, not the bulk buttons — even with rows in the queue.
+  it('renders no checkboxes and no bulk buttons for ADMIN', async () => {
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [bulkRow2, bulkRow1]))
+
+    renderQueue(adminUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Üstlen' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Reddet' })).not.toBeInTheDocument()
+  })
+
+  // AC7: the header checkbox selects every rendered row, and toggling it again
+  // clears the selection (which also hides the bulk bar).
+  it('selects and clears every row with the header "Tümünü seç" checkbox', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+
+    await waitFor(() => expect(screen.queryByText('2 talep seçildi')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Üstlen' })).not.toBeInTheDocument()
+  })
+
+  // AC1 (through the UI): "Seçilenleri Üstlen" issues one
+  // POST /api/requests/:id/assign per selected id, for exactly those ids.
+  it('bulk claims every selected row with one POST /assign per id', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: '#1 seç' }))
+    await user.click(screen.getByRole('checkbox', { name: '#2 seç' }))
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-2', status: 'ASSIGNED' }))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await user.click(screen.getByRole('button', { name: 'Seçilenleri Üstlen' }))
+
+    await waitFor(() => expect(assignCalls()).toHaveLength(2))
+    expect(assignCalls().map(([url]) => String(url).replace(/^.*\/api/, '/api'))).toEqual([
+      '/api/requests/bulk-1/assign',
+      '/api/requests/bulk-2/assign',
+    ])
+    assignCalls().forEach(([, options]) => expect(options?.method).toBe('POST'))
+  })
+
+  // AC2: the reject dialog will not submit an empty note — the zod message
+  // renders and not a single PATCH /status leaves the client.
+  it('blocks the bulk reject dialog on an empty note and sends no PATCH', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: '#1 seç' }))
+    await user.click(await screen.findByRole('button', { name: 'Seçilenleri Reddet' }))
+
+    expect(await screen.findByText('Seçilen Talepleri Reddet')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Reddet' }))
+
+    expect(await screen.findByText('Red sebebi zorunlu')).toBeInTheDocument()
+    expect(statusCalls()).toHaveLength(0)
+  })
+
+  // AC3 (through the UI): a valid note PATCHes /status once per selected id,
+  // every call carrying the same typed note alongside status REJECTED.
+  it('bulk rejects every selected row with the shared note', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: '#1 seç' }))
+    await user.click(screen.getByRole('checkbox', { name: '#2 seç' }))
+    await user.click(await screen.findByRole('button', { name: 'Seçilenleri Reddet' }))
+
+    expect(await screen.findByText('2 talep aynı red sebebiyle reddedilecek.')).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Red Sebebi'), 'Bütçe yok')
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-1', status: 'REJECTED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-2', status: 'REJECTED' }))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await user.click(screen.getByRole('button', { name: 'Reddet' }))
+
+    await waitFor(() => expect(statusCalls()).toHaveLength(2))
+    expect(statusCalls().map(([url]) => String(url).replace(/^.*\/api/, '/api'))).toEqual([
+      '/api/requests/bulk-1/status',
+      '/api/requests/bulk-2/status',
+    ])
+    statusCalls().forEach(([, options]) => {
+      expect(options?.method).toBe('PATCH')
+      expect(JSON.parse(options?.body as string)).toEqual({
+        status: 'REJECTED',
+        note: 'Bütçe yok',
+      })
+    })
+  })
+
+  // AC4: an all-success bulk claim reports through toast.success.
+  it('reports an all-success bulk claim with a success toast', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-2', status: 'ASSIGNED' }))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await user.click(screen.getByRole('button', { name: 'Seçilenleri Üstlen' }))
+
+    await waitFor(() => expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(toast.success).mock.calls[0][0]).toContain('2 talep üstlenildi')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  // AC4: a partially-conflicted bulk claim reports through toast.error, and
+  // the summary names both the successes and the rows someone else took first.
+  it('reports a partially conflicted bulk claim with an error toast naming both counts', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(errorResponse(409, 'Bu talep zaten üstlenildi'))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await user.click(screen.getByRole('button', { name: 'Seçilenleri Üstlen' }))
+
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1))
+    const message = String(vi.mocked(toast.error).mock.calls[0][0])
+    expect(message).toContain('1 talep üstlenildi')
+    expect(message).toContain('1 talep başkası tarafından alınmış')
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+  })
+
+  // AC8: the selection is derived against the rendered rows, so a row removed
+  // by the shared request:removedFromQueue socket event is silently pruned —
+  // no ghost id lingers in the count.
+  it('prunes a selected id when its row leaves via request:removedFromQueue', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    mockSocket.__emit('request:removedFromQueue', { id: 'bulk-2' })
+
+    expect(await screen.findByText('1 talep seçildi')).toBeInTheDocument()
+    expect(screen.queryByText('İkinci')).not.toBeInTheDocument()
+  })
+
+  // AC10: a successful bulk claim clears the selection (bulk bar disappears)
+  // and invalidates the queue query, which refetches the list.
+  it('clears the selection and refetches the queue after a successful bulk claim', async () => {
+    const user = userEvent.setup()
+    await renderQueueWithTwoRows()
+
+    await user.click(screen.getByRole('checkbox', { name: 'Tümünü seç' }))
+    expect(await screen.findByText('2 talep seçildi')).toBeInTheDocument()
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'bulk-2', status: 'ASSIGNED' }))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    await user.click(screen.getByRole('button', { name: 'Seçilenleri Üstlen' }))
+
+    await waitFor(() => expect(screen.queryByText('2 talep seçildi')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Seçilenleri Üstlen' })).not.toBeInTheDocument()
+    // The invalidation triggered a fresh queue GET after the two assigns.
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.filter(([url]) =>
+          String(url).includes('/api/requests?status=OPEN'),
+        ).length,
+      ).toBeGreaterThan(1),
+    )
+    expect(await screen.findByText('Kuyrukta talep yok')).toBeInTheDocument()
   })
 })

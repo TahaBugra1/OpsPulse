@@ -6,6 +6,7 @@ import {
   PRIORITY_LABELS,
   STATUS_LABELS,
   useAddComment,
+  useBulkQueueAction,
   useChangePriority,
   useChangeRequestStatus,
   useClaimRequest,
@@ -253,5 +254,115 @@ describe('requests lib', () => {
     const [url, options] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/requests?status=OPEN')
     expect(options?.method).toBe('GET')
+  })
+
+  // ---------------------------------------------------------------------
+  // useBulkQueueAction — queue-bulk-actions task
+  // ---------------------------------------------------------------------
+
+  // AC1: a CLAIM run issues exactly one POST /api/requests/:id/assign per id,
+  // in the given order. The ordered URL sequence is the observable proof that
+  // the loop is sequential (awaited one at a time), not fired in parallel.
+  it('useBulkQueueAction CLAIM issues one POST /assign per id, in the given order', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r2', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r3', status: 'ASSIGNED' }))
+
+    const { result } = renderHook(() => useBulkQueueAction(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ ids: ['r1', 'r2', 'r3'], action: 'CLAIM' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual({ succeeded: 3, conflicted: 0, failed: 0 })
+    expect(fetch).toHaveBeenCalledTimes(3)
+
+    const calls = vi.mocked(fetch).mock.calls
+    expect(calls.map(([url]) => String(url).replace(/^.*\/api/, '/api'))).toEqual([
+      '/api/requests/r1/assign',
+      '/api/requests/r2/assign',
+      '/api/requests/r3/assign',
+    ])
+    calls.forEach(([, options]) => expect(options?.method).toBe('POST'))
+  })
+
+  // AC3: a REJECT run issues PATCH /api/requests/:id/status per id, and EVERY
+  // call carries the exact same shared note alongside status REJECTED.
+  it('useBulkQueueAction REJECT PATCHes /status for every id with the shared note', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r1', status: 'REJECTED' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r2', status: 'REJECTED' }))
+
+    const { result } = renderHook(() => useBulkQueueAction(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ ids: ['r1', 'r2'], action: 'REJECT', note: 'Bütçe yok' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual({ succeeded: 2, conflicted: 0, failed: 0 })
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    const calls = vi.mocked(fetch).mock.calls
+    expect(calls.map(([url]) => String(url).replace(/^.*\/api/, '/api'))).toEqual([
+      '/api/requests/r1/status',
+      '/api/requests/r2/status',
+    ])
+    calls.forEach(([, options]) => {
+      expect(options?.method).toBe('PATCH')
+      expect(JSON.parse(options?.body as string)).toEqual({
+        status: 'REJECTED',
+        note: 'Bütçe yok',
+      })
+    })
+  })
+
+  // AC4: a mixed run never stops at the first failure — all 4 ids are still
+  // attempted — and each outcome is bucketed correctly: 409 => conflicted,
+  // any other error => failed.
+  it('useBulkQueueAction attempts every id on a mixed run and buckets 409 vs other errors', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r1', status: 'ASSIGNED' }))
+      .mockResolvedValueOnce(jsonResponse(409, { message: 'Bu talep zaten üstlenildi' }))
+      .mockResolvedValueOnce(jsonResponse(500, { message: 'Sunucu hatası' }))
+      .mockResolvedValueOnce(jsonResponse(200, { id: 'r4', status: 'ASSIGNED' }))
+
+    const { result } = renderHook(() => useBulkQueueAction(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ ids: ['r1', 'r2', 'r3', 'r4'], action: 'CLAIM' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual({ succeeded: 2, conflicted: 1, failed: 1 })
+    // The loop did not abort at the 409 or the 500: all four were attempted.
+    expect(fetch).toHaveBeenCalledTimes(4)
+    expect(
+      vi.mocked(fetch).mock.calls.map(([url]) => String(url).replace(/^.*\/api/, '/api')),
+    ).toEqual([
+      '/api/requests/r1/assign',
+      '/api/requests/r2/assign',
+      '/api/requests/r3/assign',
+      '/api/requests/r4/assign',
+    ])
+  })
+
+  // AC4 (edge): an empty id list is a no-op — a zeroed result, zero requests.
+  it('useBulkQueueAction resolves to an all-zero result with no fetch for an empty id list', async () => {
+    const { result } = renderHook(() => useBulkQueueAction(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate({ ids: [], action: 'CLAIM' })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual({ succeeded: 0, conflicted: 0, failed: 0 })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
