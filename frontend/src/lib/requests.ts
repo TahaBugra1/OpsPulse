@@ -149,10 +149,24 @@ export function useAddComment(id: string) {
   })
 }
 
-export function useOpenQueue() {
+export interface QueueFilters {
+  q?: string
+  request_type_id?: string
+  priority?: string
+}
+
+export function useOpenQueue(filters: QueueFilters = {}) {
+  const { q, request_type_id, priority } = filters
+
   return useQuery({
-    queryKey: ['requests', 'queue'],
-    queryFn: () => apiGet<RequestListItem[]>('/api/requests?status=OPEN'),
+    queryKey: ['requests', 'queue', q ?? '', request_type_id ?? '', priority ?? ''],
+    queryFn: () => {
+      const params = new URLSearchParams({ status: 'OPEN' })
+      if (q) params.set('q', q)
+      if (request_type_id) params.set('request_type_id', request_type_id)
+      if (priority) params.set('priority', priority)
+      return apiGet<RequestListItem[]>(`/api/requests?${params.toString()}`)
+    },
     select: (data) => [...data].reverse(),
   })
 }

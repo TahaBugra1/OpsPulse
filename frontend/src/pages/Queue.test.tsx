@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Queue from './Queue'
 import { AuthProvider } from '@/context/AuthContext'
@@ -52,6 +53,18 @@ function errorResponse(status: number, message: string) {
   return jsonResponse(status, { message })
 }
 
+// Queue.tsx now also calls useRequestTypes() (for the "Talep Tipi" filter
+// dropdown), whose fetch to GET /api/request-types fires before the
+// useOpenQueue() fetch on every mount (verified: hook call order in the
+// component determines fetch order). Tests that don't care about the
+// dropdown's contents queue an empty list for it via this helper, called as
+// the FIRST mockResolvedValueOnce before the queue-list response.
+function mockRequestTypesFetch(
+  types: Array<{ id: string; name: string; department_id?: string }> = [],
+) {
+  vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, types))
+}
+
 function makeRequest(overrides: Partial<RequestListItem> = {}): RequestListItem {
   return {
     id: 'uuid-1111-2222',
@@ -99,14 +112,16 @@ function seedSession(user: AuthUser) {
   sessionStorage.setItem('opspulse_user', JSON.stringify(user))
 }
 
-function renderQueue(user?: AuthUser) {
+function renderQueue(user?: AuthUser, initialEntries: string[] = ['/queue']) {
   if (user) seedSession(user)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SocketProvider>
-          <Queue />
+          <MemoryRouter initialEntries={initialEntries}>
+            <Queue />
+          </MemoryRouter>
         </SocketProvider>
       </AuthProvider>
     </QueryClientProvider>,
@@ -138,6 +153,7 @@ describe('Queue page', () => {
     const newest = makeRequest({ id: 'r3', request_number: 3, title: 'Newest' })
     const middle = makeRequest({ id: 'r2', request_number: 2, title: 'Middle' })
     const oldest = makeRequest({ id: 'r1', request_number: 1, title: 'Oldest' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [newest, middle, oldest]))
 
     renderQueue(authorityUser)
@@ -160,6 +176,7 @@ describe('Queue page', () => {
     const target = makeRequest({ id: 'target-id', request_number: 5, title: 'Claim Me' })
     const other = makeRequest({ id: 'other-id', request_number: 6, title: 'Other' })
 
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [other, target]))
 
     renderQueue(authorityUser)
@@ -189,6 +206,7 @@ describe('Queue page', () => {
   it('removes a row when a request:removedFromQueue socket event fires, with no extra fetch calls', async () => {
     const keep = makeRequest({ id: 'keep-id', request_number: 1, title: 'Keep' })
     const remove = makeRequest({ id: 'remove-id', request_number: 2, title: 'Remove' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [remove, keep]))
 
     renderQueue(authorityUser)
@@ -209,6 +227,7 @@ describe('Queue page', () => {
   it('does not crash or show an error on a 409 claim conflict', async () => {
     const user = userEvent.setup()
     const target = makeRequest({ id: 'target-id', request_number: 5, title: 'Claim Me' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [target]))
 
     renderQueue(authorityUser)
@@ -230,6 +249,7 @@ describe('Queue page', () => {
 
   // AC5: empty queue shows the empty state, no table.
   it('shows the empty state and no table when the queue is empty', async () => {
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
 
     renderQueue(authorityUser)
@@ -241,6 +261,7 @@ describe('Queue page', () => {
   // AC6: a failed GET shows role="alert" + retry button; clicking retry re-fetches.
   it('shows an error message and a working retry button on fetch failure', async () => {
     const user = userEvent.setup()
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(errorResponse(500, 'Sunucu hatası'))
 
     renderQueue(authorityUser)
@@ -252,13 +273,15 @@ describe('Queue page', () => {
     await user.click(retryButton)
 
     await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
-    expect(fetch).toHaveBeenCalledTimes(2)
+    // 1 request-types call + 2 queue calls (initial failure + retry).
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   // AC7: ADMIN sees multi-department rows, no claim button, no "Aksiyon" header.
   it('shows rows from multiple departments with no claim button or Aksiyon column for ADMIN', async () => {
     const itRequest = makeRequest({ id: 'r1', request_number: 1, department_name: 'IT' })
     const hrRequest = makeRequest({ id: 'r2', request_number: 2, department_name: 'HR' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [hrRequest, itRequest]))
 
     renderQueue(adminUser)
@@ -275,6 +298,7 @@ describe('Queue page', () => {
   it('shows a claim button per row and an Aksiyon column for DEPARTMENT_AUTHORITY', async () => {
     const r1 = makeRequest({ id: 'r1', request_number: 1, department_name: 'IT' })
     const r2 = makeRequest({ id: 'r2', request_number: 2, department_name: 'IT' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [r2, r1]))
 
     renderQueue(authorityUser)
@@ -289,6 +313,7 @@ describe('Queue page', () => {
   // mockIo is never called (mirrors the SocketContext/AppShell no-session pattern).
   it('works fully via REST with no session/socket present', async () => {
     const target = makeRequest({ id: 'target-id', request_number: 5, title: 'Claim Me' })
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [target]))
 
     renderQueue() // no seedSession -> no token -> SocketProvider creates no socket
@@ -300,14 +325,20 @@ describe('Queue page', () => {
     // undefined so canClaim is false), so just verify REST list rendering
     // worked without a crash. Also directly exercise the claim mutation via
     // useOpenQueue's own fetch call assertions is covered elsewhere; here we
-    // confirm the initial GET used the right URL/method.
-    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    // confirm the queue GET (alongside the request-types GET fired by the
+    // filter dropdown) used the right URL/method.
+    const queueCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([u]) => String(u).includes('/api/requests?status=OPEN'))
+    expect(queueCall).toBeDefined()
+    const [url, options] = queueCall!
     expect(String(url)).toContain('/api/requests?status=OPEN')
     expect(options?.method).toBe('GET')
   })
 
   // AC9: unmounting removes the request:removedFromQueue socket listener.
   it('removes the request:removedFromQueue socket listener on unmount', async () => {
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
 
     const { unmount } = renderQueue(authorityUser)
@@ -328,6 +359,7 @@ describe('Queue page', () => {
     const existing1 = makeRequest({ id: 'existing-1', request_number: 1, title: 'Existing One' })
     const existing2 = makeRequest({ id: 'existing-2', request_number: 2, title: 'Existing Two' })
     // Raw cache is newest-first (DESC from backend): existing2 then existing1.
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [existing2, existing1]))
 
     renderQueue(authorityUser)
@@ -353,6 +385,7 @@ describe('Queue page', () => {
   // request:addedToQueue AC: unmounting removes the request:addedToQueue socket
   // listener too (extends the existing unmount test).
   it('removes the request:addedToQueue socket listener on unmount', async () => {
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
 
     const { unmount } = renderQueue(authorityUser)
@@ -374,6 +407,7 @@ describe('Queue page', () => {
     const duplicate = makeRequest({ id: 'dupe-id', request_number: 7, title: 'Already Listed' })
     const other = makeRequest({ id: 'other-id', request_number: 8, title: 'Other One' })
     // Raw cache is newest-first (DESC from backend): other then duplicate.
+    mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [other, duplicate]))
 
     renderQueue(authorityUser)
@@ -397,5 +431,212 @@ describe('Queue page', () => {
     expect(rowsAfter.length).toBe(rowCountBefore)
     expect(rowsAfter.filter((row) => row.textContent?.includes('Already Listed')).length).toBe(1)
     expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+  })
+
+  // ---------------------------------------------------------------------
+  // Search/filter UI — queue-search-filter task
+  // ---------------------------------------------------------------------
+
+  // AC6: typing in the search box debounces — no new fetch on every keystroke,
+  // only once after the 300ms debounce settles.
+  it('debounces the search input, firing only one filtered fetch after typing stops', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+    const fetchCallsBeforeTyping = vi.mocked(fetch).mock.calls.length
+
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+    const searchInput = screen.getByLabelText('Ara')
+    await user.type(searchInput, 'yazıcı')
+
+    // Immediately after typing (before the 300ms debounce elapses), no
+    // additional fetch has fired yet.
+    expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBeforeTyping)
+
+    await vi.advanceTimersByTimeAsync(300)
+
+    await waitFor(() =>
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBeforeTyping + 1),
+    )
+    const [filteredUrl] = vi.mocked(fetch).mock.calls.at(-1)!
+    expect(String(filteredUrl)).toContain('q=')
+
+    vi.useRealTimers()
+  })
+
+  // AC7: selecting a request-type or priority dropdown option triggers an
+  // immediate refetch, with no debounce wait needed.
+  it('refetches immediately when the priority filter dropdown changes, with no debounce wait', async () => {
+    const user = userEvent.setup()
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const prioritySelect = screen.getByLabelText('Öncelik')
+    await user.selectOptions(prioritySelect, 'HIGH')
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+      expect(String(lastCall?.[0])).toContain('priority=HIGH')
+    })
+  })
+
+  // AC7 (request-type variant): selecting a request-type dropdown option also
+  // triggers an immediate refetch.
+  it('refetches immediately when the request-type filter dropdown changes', async () => {
+    const user = userEvent.setup()
+    mockRequestTypesFetch([{ id: 'type-9', name: 'Donanım Arızası', department_id: 'dept-1' }])
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const typeSelect = screen.getByLabelText('Talep Tipi')
+    await user.selectOptions(typeSelect, 'type-9')
+
+    await waitFor(() => {
+      const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+      expect(String(lastCall?.[0])).toContain('request_type_id=type-9')
+    })
+  })
+
+  // AC8: an empty FILTERED result shows "Bu filtrelere uyan talep yok" + a
+  // Clear button, distinct from the unfiltered "Kuyrukta talep yok" empty
+  // state (regression-checked by the pre-existing AC5 test above).
+  it('shows the filtered-empty state with a clear button when filters match nothing', async () => {
+    const user = userEvent.setup()
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const prioritySelect = screen.getByLabelText('Öncelik')
+    await user.selectOptions(prioritySelect, 'LOW')
+
+    await waitFor(() => expect(screen.getByText('Bu filtrelere uyan talep yok')).toBeInTheDocument())
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    // Two "Filtreleri Temizle" buttons render while filtered-empty: one in
+    // the filter bar, one inside the empty state itself.
+    expect(screen.getAllByRole('button', { name: 'Filtreleri Temizle' }).length).toBe(2)
+  })
+
+  // AC9: clicking "Filtreleri Temizle" resets the filters and re-fetches the
+  // unfiltered queue.
+  it('clicking Filtreleri Temizle resets filters and re-fetches the unfiltered queue', async () => {
+    const user = userEvent.setup()
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const prioritySelect = screen.getByLabelText('Öncelik')
+    await user.selectOptions(prioritySelect, 'LOW')
+
+    await waitFor(() => expect(screen.getByText('Bu filtrelere uyan talep yok')).toBeInTheDocument())
+
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+    // Two "Filtreleri Temizle" buttons render in the filtered-empty state
+    // (filter bar + empty-state); either does the same thing, use the first.
+    const [clearButton] = screen.getAllByRole('button', { name: 'Filtreleri Temizle' })
+    await user.click(clearButton)
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+    expect(String(lastCall?.[0])).toContain('/api/requests?status=OPEN')
+    expect(String(lastCall?.[0])).not.toContain('priority=')
+    expect(String(lastCall?.[0])).not.toContain('q=')
+    expect(String(lastCall?.[0])).not.toContain('request_type_id=')
+    expect(screen.getByLabelText('Öncelik')).toHaveValue('')
+  })
+
+  // AC10: mounting with a URL that already has ?priority=HIGH pre-applies
+  // that filter on first render — the very first queue GET already includes
+  // it, and the priority select is pre-set, with no user interaction.
+  it('applies a filter from the initial URL on mount, with no user interaction', async () => {
+    mockRequestTypesFetch()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest({ priority: 'HIGH' })]))
+
+    renderQueue(authorityUser, ['/queue?priority=HIGH'])
+
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+    const queueCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([u]) => String(u).includes('/api/requests?status=OPEN'))
+    expect(queueCall).toBeDefined()
+    expect(String(queueCall![0])).toContain('priority=HIGH')
+
+    expect(screen.getByLabelText('Öncelik')).toHaveValue('HIGH')
+  })
+
+  // Department-scoped request-type filter: DEPARTMENT_AUTHORITY only sees
+  // request types belonging to their own department in the "Talep Tipi"
+  // dropdown; a type from another department must not appear.
+  it('scopes the request-type filter dropdown to the DEPARTMENT_AUTHORITY user\'s own department', async () => {
+    mockRequestTypesFetch([
+      { id: 'type-own', name: 'Kendi Departman Tipi', department_id: 'dept-1' },
+      { id: 'type-other', name: 'Diğer Departman Tipi', department_id: 'dept-2' },
+    ])
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    renderQueue(authorityUser)
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Talep Tipi')).getByRole('option', {
+          name: 'Kendi Departman Tipi',
+        }),
+      ).toBeInTheDocument(),
+    )
+
+    const typeSelect = screen.getByLabelText('Talep Tipi')
+    expect(within(typeSelect).queryByRole('option', { name: 'Diğer Departman Tipi' })).not.toBeInTheDocument()
+  })
+
+  // ADMIN's request-type filter dropdown is NOT department-scoped — it still
+  // sees the full, unfiltered list of request types.
+  it('does not scope the request-type filter dropdown for ADMIN', async () => {
+    mockRequestTypesFetch([
+      { id: 'type-own', name: 'Kendi Departman Tipi', department_id: 'dept-1' },
+      { id: 'type-other', name: 'Diğer Departman Tipi', department_id: 'dept-2' },
+    ])
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    renderQueue(adminUser)
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Talep Tipi')).getByRole('option', {
+          name: 'Kendi Departman Tipi',
+        }),
+      ).toBeInTheDocument(),
+    )
+
+    const typeSelect = screen.getByLabelText('Talep Tipi')
+    expect(within(typeSelect).getByRole('option', { name: 'Diğer Departman Tipi' })).toBeInTheDocument()
   })
 })

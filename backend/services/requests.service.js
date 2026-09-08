@@ -376,11 +376,23 @@ const HISTORY_SELECT = `
 `;
 
 const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function listRequests(query, user) {
   const status = query && query.status;
   if (status !== undefined && status !== null && status !== '' && !VALID_STATUSES.includes(status)) {
     fail(400, 'Geçersiz status değeri');
+  }
+
+  const q = query && query.q;
+  const requestTypeId = query && query.request_type_id;
+  const priority = query && query.priority;
+
+  if (requestTypeId && !UUID_REGEX.test(requestTypeId)) {
+    fail(400, 'Geçersiz talep türü');
+  }
+  if (priority && !SLA_HOURS[priority]) {
+    fail(400, 'Geçersiz öncelik');
   }
 
   const conditions = [];
@@ -397,6 +409,21 @@ async function listRequests(query, user) {
   if (status) {
     params.push(status);
     conditions.push(`r.status = $${params.length}`);
+  }
+
+  if (q) {
+    params.push(`%${q}%`);
+    conditions.push(`(r.title ILIKE $${params.length} OR r.description ILIKE $${params.length})`);
+  }
+
+  if (requestTypeId) {
+    params.push(requestTypeId);
+    conditions.push(`r.request_type_id = $${params.length}`);
+  }
+
+  if (priority) {
+    params.push(priority);
+    conditions.push(`r.priority = $${params.length}`);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

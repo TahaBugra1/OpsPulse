@@ -62,6 +62,22 @@ async function createRequestAs(employeeToken, requestTypeId, priority) {
   return res;
 }
 
+// Like createRequestAs, but allows a custom title/description for the
+// search-filter (?q=) tests below, which need to control matching text.
+async function createCustomRequestAs(employeeToken, requestTypeId, priority, title, description) {
+  const body = {
+    title,
+    description,
+    request_type_id: requestTypeId,
+  };
+  if (priority) body.priority = priority;
+  const res = await request(app)
+    .post('/api/requests')
+    .set('Authorization', `Bearer ${employeeToken}`)
+    .send(body);
+  return res;
+}
+
 let itAuthorityToken;
 let itAuthorityId;
 let hrAuthorityToken;
@@ -369,4 +385,175 @@ test('GET /api/requests/:id - joined display fields are correct, assigned_to_nam
     .set('Authorization', `Bearer ${employee.token}`);
   assert.equal(afterClaimRes.status, 200);
   assert.equal(afterClaimRes.body.assigned_to_name, expectedAssignedToName);
+});
+
+// ---------------------------------------------------------------------------
+// Queue search/filter (?q=, ?request_type_id=, ?priority=) — queue-search-filter task
+// ---------------------------------------------------------------------------
+
+// AC1: q does a case-insensitive ILIKE match against title OR description;
+// non-matching requests are excluded. Covers a match via title, a match via
+// description only, and a non-matching row (all as one flow since they share
+// the same fixture set and this mirrors the file's existing per-scenario style).
+test('GET /api/requests?q= - case-insensitive match on title or description, excludes non-matching', async (t) => {
+  const employee = await registerEmployee();
+
+  const titleMatch = await createCustomRequestAs(
+    employee.token,
+    passwordResetTypeId,
+    'LOW',
+    'Printer is broken',
+    'Cannot print documents',
+  );
+  assert.equal(titleMatch.status, 201, JSON.stringify(titleMatch.body));
+
+  const descriptionMatch = await createCustomRequestAs(
+    employee.token,
+    passwordResetTypeId,
+    'LOW',
+    'Office equipment issue',
+    'The office PRINTER is jammed again',
+  );
+  assert.equal(descriptionMatch.status, 201, JSON.stringify(descriptionMatch.body));
+
+  const noMatch = await createCustomRequestAs(
+    employee.token,
+    passwordResetTypeId,
+    'LOW',
+    'Password reset needed',
+    'Forgot my login password',
+  );
+  assert.equal(noMatch.status, 201, JSON.stringify(noMatch.body));
+
+  registerCleanup(t, employee, [titleMatch.body.id, descriptionMatch.body.id, noMatch.body.id]);
+
+  // Lowercase query against a mixed-case "PRINTER" substring in the fixtures
+  // exercises case-insensitivity in both directions.
+  const res = await request(app)
+    .get('/api/requests?q=printer')
+    .set('Authorization', `Bearer ${employee.token}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const ids = res.body.map((r) => r.id);
+  assert.ok(ids.includes(titleMatch.body.id));
+  assert.ok(ids.includes(descriptionMatch.body.id));
+  assert.ok(!ids.includes(noMatch.body.id));
+});
+
+// AC2: request_type_id filters to exactly that type.
+test('GET /api/requests?request_type_id= - filters to exactly the given request type', async (t) => {
+  const employee = await registerEmployee();
+
+  const passwordReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(passwordReq.status, 201);
+  const leaveReq = await createRequestAs(employee.token, leaveRequestTypeId, 'LOW');
+  assert.equal(leaveReq.status, 201);
+
+  registerCleanup(t, employee, [passwordReq.body.id, leaveReq.body.id]);
+
+  const res = await request(app)
+    .get(`/api/requests?request_type_id=${passwordResetTypeId}`)
+    .set('Authorization', `Bearer ${employee.token}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const ids = res.body.map((r) => r.id);
+  assert.ok(ids.includes(passwordReq.body.id));
+  assert.ok(!ids.includes(leaveReq.body.id));
+});
+
+// AC3: priority filters to exactly that priority.
+test('GET /api/requests?priority= - filters to exactly the given priority', async (t) => {
+  const employee = await registerEmployee();
+
+  const highReq = await createRequestAs(employee.token, passwordResetTypeId, 'HIGH');
+  assert.equal(highReq.status, 201);
+  const lowReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(lowReq.status, 201);
+
+  registerCleanup(t, employee, [highReq.body.id, lowReq.body.id]);
+
+  const res = await request(app)
+    .get('/api/requests?priority=HIGH')
+    .set('Authorization', `Bearer ${employee.token}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const ids = res.body.map((r) => r.id);
+  assert.ok(ids.includes(highReq.body.id));
+  assert.ok(!ids.includes(lowReq.body.id));
+});
+
+// AC4: all three filters combine with AND (not OR), on top of (never replacing)
+// role/department scoping. Also the authorization-boundary case: a filter
+// combination that would match a request in a DIFFERENT department must never
+// leak it to an authority scoped to another department.
+test('GET /api/requests - q, request_type_id and priority combine with AND, and never bypass department scoping', async (t) => {
+  const employee = await registerEmployee();
+
+  // Matches ALL three filters below.
+  const fullMatch = await createCustomRequestAs(
+    employee.token,
+    passwordResetTypeId,
+    'HIGH',
+    'Boundary Widget Alpha',
+    'needs urgent attention',
+  );
+  assert.equal(fullMatch.status, 201, JSON.stringify(fullMatch.body));
+
+  // Matches q + request_type_id but NOT priority -> must be excluded by the AND.
+  const partialMatch = await createCustomRequestAs(
+    employee.token,
+    passwordResetTypeId,
+    'LOW',
+    'Boundary Widget Beta',
+    'not urgent at all',
+  );
+  assert.equal(partialMatch.status, 201, JSON.stringify(partialMatch.body));
+
+  registerCleanup(t, employee, [fullMatch.body.id, partialMatch.body.id]);
+
+  const combinedRes = await request(app)
+    .get(`/api/requests?q=Boundary%20Widget&request_type_id=${passwordResetTypeId}&priority=HIGH`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+
+  assert.equal(combinedRes.status, 200, JSON.stringify(combinedRes.body));
+  const combinedIds = combinedRes.body.map((r) => r.id);
+  assert.ok(combinedIds.includes(fullMatch.body.id));
+  assert.ok(!combinedIds.includes(partialMatch.body.id));
+
+  // Authorization boundary: the same q+priority combination matches
+  // fullMatch's title/priority exactly, but fullMatch lives in the IT
+  // department. An HR authority's filtered query must return nothing for it
+  // — role/department scoping is applied before (and is never bypassed by)
+  // the q/priority filters.
+  const hrBoundaryRes = await request(app)
+    .get('/api/requests?q=Boundary%20Widget&priority=HIGH')
+    .set('Authorization', `Bearer ${hrAuthorityToken}`);
+
+  assert.equal(hrBoundaryRes.status, 200, JSON.stringify(hrBoundaryRes.body));
+  const hrBoundaryIds = hrBoundaryRes.body.map((r) => r.id);
+  assert.ok(!hrBoundaryIds.includes(fullMatch.body.id));
+});
+
+// AC5: invalid priority -> 400; malformed-UUID request_type_id -> 400;
+// well-formed-but-nonexistent request_type_id -> 200 with an empty array
+// (deliberately not a 400 — resolved during planning).
+test('GET /api/requests - invalid filter values are rejected, well-formed-but-unknown request_type_id returns empty', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+
+  const invalidPriorityRes = await request(app)
+    .get('/api/requests?priority=URGENT')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(invalidPriorityRes.status, 400);
+
+  const malformedTypeIdRes = await request(app)
+    .get('/api/requests?request_type_id=not-a-uuid')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(malformedTypeIdRes.status, 400);
+
+  const unknownTypeIdRes = await request(app)
+    .get(`/api/requests?request_type_id=${randomUUID()}`)
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(unknownTypeIdRes.status, 200, JSON.stringify(unknownTypeIdRes.body));
+  assert.deepEqual(unknownTypeIdRes.body, []);
 });

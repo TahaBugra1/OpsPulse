@@ -51,7 +51,10 @@ async function patchRequestPriority(req, res) {
 
 async function getRequests(req, res) {
   try {
-    const result = await listRequests({ status: req.query.status }, req.user);
+    const result = await listRequests(
+      { status: req.query.status, q: req.query.q, request_type_id: req.query.request_type_id, priority: req.query.priority },
+      req.user
+    );
     res.status(200).json(result);
   } catch (err) {
     res.status(err.status || 500).json({ status: 'error', message: err.message || 'Talepler getirilemedi, lütfen tekrar deneyin' });
