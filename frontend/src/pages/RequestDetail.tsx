@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
+import { Controller, useForm, type UseFormReturn } from 'react-hook-form'
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,9 +29,11 @@ import {
   useChangePriority,
   useChangeRequestStatus,
   useClaimRequest,
+  useDeleteComment,
   useRequest,
   useRequestComments,
   useRequestHistory,
+  useUpdateComment,
 } from '@/lib/requests'
 import {
   commentSchema,
@@ -81,6 +83,8 @@ export default function RequestDetail() {
 
   const [actionError, setActionError] = useState<string | null>(null)
   const [commentError, setCommentError] = useState<string | null>(null)
+  const [commentActionError, setCommentActionError] = useState<string | null>(null)
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [rejectOpen, setRejectOpen] = useState(false)
 
   const rejectForm = useForm<RejectNoteFormValues>({
@@ -89,6 +93,11 @@ export default function RequestDetail() {
   })
 
   const commentForm = useForm<CommentFormValues>({
+    resolver: zodResolver(commentSchema),
+    defaultValues: { content: '' },
+  })
+
+  const editCommentForm = useForm<CommentFormValues>({
     resolver: zodResolver(commentSchema),
     defaultValues: { content: '' },
   })
@@ -170,6 +179,21 @@ export default function RequestDetail() {
     )
   }
 
+  function handleCommentActionError(err: unknown) {
+    setCommentActionError(err instanceof Error ? err.message : 'İşlem başarısız oldu, lütfen tekrar deneyin')
+  }
+
+  function startEditingComment(comment: RequestComment) {
+    setCommentActionError(null)
+    setEditingCommentId(comment.id)
+    editCommentForm.reset({ content: comment.content })
+  }
+
+  function cancelEditingComment() {
+    setEditingCommentId(null)
+    editCommentForm.reset({ content: '' })
+  }
+
   // Live updates: while this page is mounted, join this request's socket room
   // and apply incoming events directly to the query cache. The payloads are
   // the same enriched shape GET already returns, so no extra fetch is needed.
@@ -198,13 +222,21 @@ export default function RequestDetail() {
       })
     }
 
+    function handleCommentUpdated(payload: RequestComment) {
+      queryClient.setQueryData(['requests', requestId, 'comments'], (old: RequestComment[] | undefined) =>
+        old?.map((c) => (c.id === payload.id ? payload : c)),
+      )
+    }
+
     socket.on('request:updated', handleRequestUpdated)
     socket.on('request:commented', handleRequestCommented)
+    socket.on('request:commentUpdated', handleCommentUpdated)
 
     return () => {
       socket.off('connect', joinRoom)
       socket.off('request:updated', handleRequestUpdated)
       socket.off('request:commented', handleRequestCommented)
+      socket.off('request:commentUpdated', handleCommentUpdated)
     }
   }, [socket, requestId, queryClient])
 
@@ -354,17 +386,40 @@ export default function RequestDetail() {
                 {commentsQuery.data && commentsQuery.data.length > 0 && (
                   <ul className="flex flex-col gap-3">
                     {commentsQuery.data.map((comment) => (
-                      <li key={comment.id} className="rounded-md border p-3 text-sm">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="font-medium">{comment.author_name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(comment.created_at).toLocaleString('tr-TR')}
-                          </span>
-                        </div>
-                        <p className="whitespace-pre-wrap">{comment.content}</p>
-                      </li>
+                      <CommentItem
+                        key={comment.id}
+                        requestId={requestId}
+                        comment={comment}
+                        currentUserId={user?.id}
+                        isEditing={editingCommentId === comment.id}
+                        editForm={editCommentForm}
+                        onStartEdit={() => startEditingComment(comment)}
+                        onCancelEdit={cancelEditingComment}
+                        onEditSuccess={(updated) => {
+                          setEditingCommentId(null)
+                          queryClient.setQueryData(
+                            ['requests', requestId, 'comments'],
+                            (old: RequestComment[] | undefined) =>
+                              old?.map((c) => (c.id === updated.id ? updated : c)),
+                          )
+                        }}
+                        onDeleteSuccess={(updated) => {
+                          queryClient.setQueryData(
+                            ['requests', requestId, 'comments'],
+                            (old: RequestComment[] | undefined) =>
+                              old?.map((c) => (c.id === updated.id ? updated : c)),
+                          )
+                        }}
+                        onActionError={handleCommentActionError}
+                      />
                     ))}
                   </ul>
+                )}
+
+                {commentActionError && (
+                  <p role="alert" className="text-sm font-normal text-destructive">
+                    {commentActionError}
+                  </p>
                 )}
 
                 {canComment && (
@@ -497,5 +552,119 @@ export default function RequestDetail() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// Per-comment mutation hooks (useUpdateComment/useDeleteComment) need a
+// commentId bound at hook-call time, which can't happen inside the parent's
+// .map() — the same reason Queue.tsx's QueueRow exists as its own component
+// for a per-row useClaimRequest(request.id).
+function CommentItem({
+  requestId,
+  comment,
+  currentUserId,
+  isEditing,
+  editForm,
+  onStartEdit,
+  onCancelEdit,
+  onEditSuccess,
+  onDeleteSuccess,
+  onActionError,
+}: {
+  requestId: string
+  comment: RequestComment
+  currentUserId: string | undefined
+  isEditing: boolean
+  editForm: UseFormReturn<CommentFormValues>
+  onStartEdit: () => void
+  onCancelEdit: () => void
+  onEditSuccess: (updated: RequestComment) => void
+  onDeleteSuccess: (updated: RequestComment) => void
+  onActionError: (err: unknown) => void
+}) {
+  const updateMutation = useUpdateComment(requestId, comment.id)
+  const deleteMutation = useDeleteComment(requestId, comment.id)
+
+  function onEditSubmit(values: CommentFormValues) {
+    updateMutation.mutate(
+      { content: values.content },
+      { onSuccess: onEditSuccess, onError: onActionError },
+    )
+  }
+
+  function handleDelete() {
+    deleteMutation.mutate(undefined, { onSuccess: onDeleteSuccess, onError: onActionError })
+  }
+
+  if (comment.is_deleted) {
+    return (
+      <li className="rounded-md border p-3 text-sm">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-medium">{comment.author_name}</span>
+          <span className="text-xs text-muted-foreground">
+            {new Date(comment.created_at).toLocaleString('tr-TR')}
+          </span>
+        </div>
+        <p className="italic text-muted-foreground">{comment.content}</p>
+      </li>
+    )
+  }
+
+  const isAuthor = !!currentUserId && comment.author_id === currentUserId
+  const isEdited = comment.updated_at !== comment.created_at
+
+  return (
+    <li className="rounded-md border p-3 text-sm">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium">{comment.author_name}</span>
+        <span className="text-xs text-muted-foreground">
+          {new Date(comment.created_at).toLocaleString('tr-TR')}
+          {isEdited && ' (düzenlendi)'}
+        </span>
+      </div>
+
+      {isEditing ? (
+        <form className="flex flex-col gap-3" onSubmit={editForm.handleSubmit(onEditSubmit)} noValidate>
+          <Controller
+            control={editForm.control}
+            name="content"
+            render={({ field, fieldState }) => (
+              <Field data-invalid={!!fieldState.error}>
+                <FieldLabel htmlFor={`comment-edit-${comment.id}`}>Yorumu Düzenle</FieldLabel>
+                <Input
+                  {...field}
+                  id={`comment-edit-${comment.id}`}
+                  disabled={updateMutation.isPending}
+                  aria-invalid={!!fieldState.error}
+                />
+                <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+              </Field>
+            )}
+          />
+          <div className="flex items-center gap-2">
+            <Button type="submit" size="sm" disabled={updateMutation.isPending}>
+              Kaydet
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={onCancelEdit} disabled={updateMutation.isPending}>
+              Vazgeç
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <p className="whitespace-pre-wrap">{comment.content}</p>
+          {isAuthor && (
+            <div className="mt-2 flex items-center gap-2">
+              <Button type="button" size="sm" variant="ghost" onClick={onStartEdit}>
+                Düzenle
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={handleDelete} disabled={deleteMutation.isPending}>
+                Sil
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </li>
   )
 }

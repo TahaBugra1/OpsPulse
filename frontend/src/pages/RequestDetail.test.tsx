@@ -83,6 +83,8 @@ function makeComment(overrides: Partial<RequestComment> = {}): RequestComment {
     author_id: 'user-1',
     content: 'Durum nedir?',
     created_at: '2026-09-03T11:00:00.000Z',
+    updated_at: '2026-09-03T11:00:00.000Z',
+    is_deleted: false,
     author_name: 'Taha',
     ...overrides,
   }
@@ -1127,6 +1129,270 @@ describe('RequestDetail page', () => {
       expect(screen.getByRole('button', { name: 'Tekrar Dene' })).toBeInTheDocument()
       expect(screen.queryByText('Yorumlar')).not.toBeInTheDocument()
       expect(screen.queryByText('Geçmiş')).not.toBeInTheDocument()
+    })
+  })
+
+  // ── comment edit/delete ──────────────────────────────────────────────────
+  // fakeUser.id is 'user-1', and makeComment()'s default author_id is ALSO
+  // 'user-1', so a default makeComment() is the logged-in user's own comment.
+
+  describe('comment edit/delete', () => {
+    it('shows Düzenle/Sil for the current user\'s own comment, and neither for someone else\'s', async () => {
+      const own = makeComment({ id: 'c1', author_id: 'user-1', content: 'Benim yorumum' })
+      const other = makeComment({ id: 'c2', author_id: 'user-2', content: 'Başkasının yorumu' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [own, other]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Benim yorumum')).toBeInTheDocument())
+
+      const editButtons = screen.getAllByRole('button', { name: 'Düzenle' })
+      const deleteButtons = screen.getAllByRole('button', { name: 'Sil' })
+      expect(editButtons.length).toBe(1)
+      expect(deleteButtons.length).toBe(1)
+    })
+
+    it('renders a tombstoned comment with no buttons even when authored by the current user (is_deleted wins over author check)', async () => {
+      const tombstoned = makeComment({
+        id: 'c1',
+        author_id: 'user-1',
+        content: 'Bu yorum silindi',
+        is_deleted: true,
+      })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [tombstoned]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Bu yorum silindi')).toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: 'Düzenle' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Sil' })).not.toBeInTheDocument()
+    })
+
+    it('shows the "(düzenlendi)" suffix only for a comment whose updated_at differs from created_at', async () => {
+      const edited = makeComment({
+        id: 'c1',
+        content: 'Düzenlenmiş yorum',
+        created_at: '2026-09-03T11:00:00.000Z',
+        updated_at: '2026-09-03T12:00:00.000Z',
+      })
+      const notEdited = makeComment({
+        id: 'c2',
+        content: 'Düzenlenmemiş yorum',
+        created_at: '2026-09-03T11:00:00.000Z',
+        updated_at: '2026-09-03T11:00:00.000Z',
+      })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [edited, notEdited]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Düzenlenmiş yorum')).toBeInTheDocument())
+      expect(screen.getAllByText(/\(düzenlendi\)/).length).toBe(1)
+    })
+
+    it('editing a comment sends PATCH with the exact URL/method/body and updates the content with no extra GET fetch', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Eski içerik' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Eski içerik')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      await user.click(screen.getByRole('button', { name: 'Düzenle' }))
+      const editInput = screen.getByLabelText('Yorumu Düzenle')
+      expect(editInput).toHaveValue('Eski içerik')
+
+      await user.clear(editInput)
+      await user.type(editInput, 'Yeni içerik')
+
+      const updatedComment = { ...comment, content: 'Yeni içerik', updated_at: '2026-09-03T13:00:00.000Z' }
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updatedComment))
+
+      await user.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+      await waitFor(() => expect(screen.getByText('Yeni içerik')).toBeInTheDocument())
+      expect(screen.queryByText('Eski içerik')).not.toBeInTheDocument()
+
+      const patchCall = vi
+        .mocked(fetch)
+        .mock.calls.find(([u, init]) => String(u).endsWith('/comments/c1') && init?.method === 'PATCH')
+      expect(patchCall).toBeDefined()
+      expect(String(patchCall?.[0])).toContain('/api/requests/uuid-1111-2222/comments/c1')
+      expect(JSON.parse(patchCall?.[1]?.body as string)).toEqual({ content: 'Yeni içerik' })
+
+      // Only the one PATCH call happened beyond the initial GETs - no extra refetch.
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore + 1)
+
+      // The edit form closed.
+      expect(screen.queryByLabelText('Yorumu Düzenle')).not.toBeInTheDocument()
+    })
+
+    it('clicking Vazgeç closes the edit form without calling fetch and restores the original content if reopened', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Orijinal içerik' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Orijinal içerik')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      await user.click(screen.getByRole('button', { name: 'Düzenle' }))
+      const editInput = screen.getByLabelText('Yorumu Düzenle')
+      await user.clear(editInput)
+      await user.type(editInput, 'Kaydedilmeyecek değişiklik')
+
+      await user.click(screen.getByRole('button', { name: 'Vazgeç' }))
+
+      expect(screen.queryByLabelText('Yorumu Düzenle')).not.toBeInTheDocument()
+      expect(screen.getByText('Orijinal içerik')).toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+
+      // Reopening shows the original content, not the discarded edit.
+      await user.click(screen.getByRole('button', { name: 'Düzenle' }))
+      expect(screen.getByLabelText('Yorumu Düzenle')).toHaveValue('Orijinal içerik')
+    })
+
+    it('submitting the edit form with empty/whitespace content shows the add-comment form\'s validation error and sends no PATCH', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'İçerik' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('İçerik')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      await user.click(screen.getByRole('button', { name: 'Düzenle' }))
+      const editInput = screen.getByLabelText('Yorumu Düzenle')
+      await user.clear(editInput)
+      await user.type(editInput, '   ')
+
+      await user.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+      expect(await screen.findByText('Yorum boş olamaz')).toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+    })
+
+    it('clicking Sil sends DELETE with the exact URL/method and no body, and the row becomes tombstoned with no extra GET fetch', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Silinecek yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Silinecek yorum')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      const tombstoned = { ...comment, content: 'Bu yorum silindi', is_deleted: true }
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, tombstoned))
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+
+      await waitFor(() => expect(screen.getByText('Bu yorum silindi')).toBeInTheDocument())
+      expect(screen.queryByText('Silinecek yorum')).not.toBeInTheDocument()
+
+      const deleteCall = vi
+        .mocked(fetch)
+        .mock.calls.find(([u, init]) => String(u).endsWith('/comments/c1') && init?.method === 'DELETE')
+      expect(deleteCall).toBeDefined()
+      expect(String(deleteCall?.[0])).toContain('/api/requests/uuid-1111-2222/comments/c1')
+      expect(deleteCall?.[1]?.body).toBeUndefined()
+
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore + 1)
+      expect(screen.queryByRole('button', { name: 'Sil' })).not.toBeInTheDocument()
+    })
+
+    it('applies a request:commentUpdated socket event directly to the cache with no extra fetch', async () => {
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Canlı güncelleme öncesi' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Canlı güncelleme öncesi')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      const tombstonedViaSocket = { ...comment, content: 'Bu yorum silindi', is_deleted: true }
+      mockSocket.__emit('request:commentUpdated', tombstonedViaSocket)
+
+      await waitFor(() => expect(screen.getByText('Bu yorum silindi')).toBeInTheDocument())
+      expect(screen.queryByText('Canlı güncelleme öncesi')).not.toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+    })
+
+    it('shows an error alert and leaves the comment unchanged when a PATCH edit fails', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Değişmeyecek içerik' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Değişmeyecek içerik')).toBeInTheDocument())
+
+      await user.click(screen.getByRole('button', { name: 'Düzenle' }))
+      const editInput = screen.getByLabelText('Yorumu Düzenle')
+      await user.clear(editInput)
+      await user.type(editInput, 'Başarısız olacak düzenleme')
+
+      vi.mocked(fetch).mockResolvedValueOnce(errorResponse(500, 'Yorum güncellenemedi, lütfen tekrar deneyin'))
+
+      await user.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Yorum güncellenemedi, lütfen tekrar deneyin')
+
+      // The cache was never written to on failure, so the original comment content
+      // is still what's stored - visible once the (still-open) edit form is cancelled.
+      await user.click(screen.getByRole('button', { name: 'Vazgeç' }))
+      expect(screen.getByText('Değişmeyecek içerik')).toBeInTheDocument()
+    })
+
+    it('shows an error alert and leaves the comment unchanged when a DELETE fails', async () => {
+      const user = userEvent.setup()
+      const comment = makeComment({ id: 'c1', author_id: 'user-1', content: 'Silinemeyecek içerik' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [comment]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Silinemeyecek içerik')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValueOnce(errorResponse(403, 'Bu işlem için yetkiniz yok'))
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Bu işlem için yetkiniz yok')
+      expect(screen.getByText('Silinemeyecek içerik')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Sil' })).toBeInTheDocument()
     })
   })
 })

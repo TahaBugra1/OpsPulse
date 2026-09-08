@@ -2,6 +2,7 @@ const pool = require('./db');
 const { emitToRequestRoom, emitToUserRoom, emitToDepartmentQueue } = require('../sockets/emitter');
 
 const SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
+const DELETED_COMMENT_TEXT = 'Bu yorum silindi';
 
 function fail(status, message) {
   const err = new Error(message);
@@ -549,6 +550,104 @@ async function listComments(requestId, user) {
   return result.rows;
 }
 
+async function updateComment(requestId, commentId, content, user) {
+  const trimmedContent = typeof content === 'string' ? content.trim() : '';
+  if (!trimmedContent) {
+    fail(400, 'Yorum içeriği boş olamaz');
+  }
+  if (trimmedContent.length > 2000) {
+    fail(400, 'Yorum en fazla 2000 karakter olabilir');
+  }
+
+  await getRequestById(requestId, user);
+
+  let existing;
+  try {
+    existing = await pool.query(
+      'SELECT * FROM request_comments WHERE id = $1 AND request_id = $2',
+      [commentId, requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum güncellenemedi, lütfen tekrar deneyin');
+  }
+  const comment = existing.rows[0];
+  if (!comment) {
+    fail(404, 'Yorum bulunamadı');
+  }
+  if (comment.author_id !== user.id) {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+  if (comment.is_deleted) {
+    fail(409, 'Bu yorum zaten silinmiş');
+  }
+
+  let updateResult;
+  try {
+    updateResult = await pool.query(
+      `UPDATE request_comments SET content = $1 WHERE id = $2 RETURNING *`,
+      [trimmedContent, commentId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum güncellenemedi, lütfen tekrar deneyin');
+  }
+
+  let enrichedRow = updateResult.rows[0];
+  try {
+    const enrichedResult = await pool.query(`${COMMENT_SELECT} WHERE c.id = $1`, [commentId]);
+    enrichedRow = enrichedResult.rows[0];
+    emitToRequestRoom(requestId, 'request:commentUpdated', enrichedRow);
+  } catch (emitErr) {
+    console.error('request:commentUpdated emisyonu basarisiz oldu:', emitErr);
+  }
+
+  return enrichedRow;
+}
+
+async function deleteComment(requestId, commentId, user) {
+  await getRequestById(requestId, user);
+
+  let existing;
+  try {
+    existing = await pool.query(
+      'SELECT * FROM request_comments WHERE id = $1 AND request_id = $2',
+      [commentId, requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum silinemedi, lütfen tekrar deneyin');
+  }
+  const comment = existing.rows[0];
+  if (!comment) {
+    fail(404, 'Yorum bulunamadı');
+  }
+  if (comment.author_id !== user.id) {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+  if (comment.is_deleted) {
+    fail(409, 'Bu yorum zaten silinmiş');
+  }
+
+  let updateResult;
+  try {
+    updateResult = await pool.query(
+      `UPDATE request_comments SET content = $1, is_deleted = true WHERE id = $2 RETURNING *`,
+      [DELETED_COMMENT_TEXT, commentId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum silinemedi, lütfen tekrar deneyin');
+  }
+
+  let enrichedRow = updateResult.rows[0];
+  try {
+    const enrichedResult = await pool.query(`${COMMENT_SELECT} WHERE c.id = $1`, [commentId]);
+    enrichedRow = enrichedResult.rows[0];
+    emitToRequestRoom(requestId, 'request:commentUpdated', enrichedRow);
+  } catch (emitErr) {
+    console.error('request:commentUpdated emisyonu basarisiz oldu:', emitErr);
+  }
+
+  return enrichedRow;
+}
+
 async function listHistory(requestId, user) {
   await getRequestById(requestId, user);
 
@@ -586,6 +685,8 @@ module.exports = {
   getRequestById,
   addComment,
   listComments,
+  updateComment,
+  deleteComment,
   listHistory,
   listRequestTypes,
 };

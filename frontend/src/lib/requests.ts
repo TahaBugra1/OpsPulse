@@ -4,7 +4,7 @@
 // bulk claim/reject mutation).
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { ApiError, apiGet, apiPatch, apiPost } from './api'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from './api'
 
 export interface RequestListItem {
   id: string
@@ -39,6 +39,8 @@ export interface RequestComment {
   author_id: string
   content: string
   created_at: string
+  updated_at: string
+  is_deleted: boolean
   author_name: string
 }
 
@@ -147,6 +149,19 @@ export function useChangePriority(id: string) {
 export function useAddComment(id: string) {
   return useMutation({
     mutationFn: (body: { content: string }) => apiPost<unknown>(`/api/requests/${id}/comments`, body),
+  })
+}
+
+export function useUpdateComment(requestId: string, commentId: string) {
+  return useMutation({
+    mutationFn: (body: { content: string }) =>
+      apiPatch<RequestComment>(`/api/requests/${requestId}/comments/${commentId}`, body),
+  })
+}
+
+export function useDeleteComment(requestId: string, commentId: string) {
+  return useMutation({
+    mutationFn: () => apiDelete<RequestComment>(`/api/requests/${requestId}/comments/${commentId}`),
   })
 }
 

@@ -7,6 +7,8 @@ const {
   getRequestById,
   addComment,
   listComments,
+  updateComment,
+  deleteComment,
   listHistory,
 } = require('../services/requests.service');
 
@@ -88,6 +90,24 @@ async function getComments(req, res) {
   }
 }
 
+async function patchComment(req, res) {
+  try {
+    const result = await updateComment(req.params.id, req.params.commentId, req.body.content, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Yorum güncellenemedi, lütfen tekrar deneyin' });
+  }
+}
+
+async function deleteCommentHandler(req, res) {
+  try {
+    const result = await deleteComment(req.params.id, req.params.commentId, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Yorum silinemedi, lütfen tekrar deneyin' });
+  }
+}
+
 async function getHistory(req, res) {
   try {
     const result = await listHistory(req.params.id, req.user);
@@ -106,5 +126,7 @@ module.exports = {
   getRequestByIdHandler,
   postAddComment,
   getComments,
+  patchComment,
+  deleteCommentHandler,
   getHistory,
 };
