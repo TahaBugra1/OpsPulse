@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Analytics from './Analytics'
+import { AuthProvider } from '@/context/AuthContext'
 import type {
   AnalyticsSummary,
   BottlenecksData,
@@ -10,6 +11,7 @@ import type {
   DistributionData,
   SlaMetrics,
 } from '@/lib/analytics'
+import type { AuthUser } from '@/lib/authStorage'
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -102,11 +104,36 @@ function getSummaryCard() {
   return screen.getByText('Durum Özeti').closest('div[data-slot="card"]') as HTMLElement
 }
 
-function renderAnalytics() {
+// Analytics.tsx's role-router calls useAuth() at the top, which throws
+// 'useAuth must be used within an AuthProvider' with no AuthProvider present.
+// Defaulted to DEPARTMENT_AUTHORITY: none of the 28 pre-existing tests below
+// exercise role-based behavior -- they all test FullAnalytics's 5-section
+// rendering, which any non-EMPLOYEE role routes to unchanged. Session must be
+// seeded into sessionStorage BEFORE render(), since AuthProvider reads it
+// only in its useState initializer (mirrors seedSession/renderShell in
+// AppShell.test.tsx).
+const fakeUser: AuthUser = {
+  id: 'user-1',
+  name: 'Taha',
+  surname: null,
+  email: 'taha@example.com',
+  role: 'DEPARTMENT_AUTHORITY',
+  department_id: 'dept-1',
+}
+
+function seedSession(user: AuthUser) {
+  sessionStorage.setItem('opspulse_token', 'tok-123')
+  sessionStorage.setItem('opspulse_user', JSON.stringify(user))
+}
+
+function renderAnalytics(user: AuthUser = fakeUser) {
+  seedSession(user)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <Analytics />
+      <AuthProvider>
+        <Analytics />
+      </AuthProvider>
     </QueryClientProvider>,
   )
 }
@@ -927,5 +954,96 @@ describe('bottlenecks (Analytics 2C)', () => {
     await waitFor(() =>
       expect(within(deptCard).queryByText('Yükleniyor...')).not.toBeInTheDocument(),
     )
+  })
+})
+
+describe('role-based routing (employee-personal-summary)', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const employeeUser: AuthUser = { ...fakeUser, role: 'EMPLOYEE', department_id: null }
+
+  // AC5: EMPLOYEE renders exactly the 2 EmployeeAnalytics cards ("Durum Özeti",
+  // "SLA Performansı") and none of FullAnalytics's other sections
+  it('renders exactly the 2 EMPLOYEE cards and none of the FullAnalytics-only sections', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+
+    const { container } = renderAnalytics(employeeUser)
+
+    await waitFor(() => expect(within(getSummaryCard()).getByText('Açık')).toBeInTheDocument())
+    expect(screen.getByText('Durum Özeti')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('SLA Uyum Oranı')).toBeInTheDocument())
+    expect(screen.getByText('SLA Performansı')).toBeInTheDocument()
+
+    expect(screen.queryByText('Departman İş Yükü')).not.toBeInTheDocument()
+    expect(screen.queryByText('Dağılımlar')).not.toBeInTheDocument()
+    expect(screen.queryByText('Durum Dağılımı')).not.toBeInTheDocument()
+    expect(screen.queryByText('Darboğazlar')).not.toBeInTheDocument()
+
+    expect(container.querySelectorAll('div[data-slot="card"]')).toHaveLength(2)
+  })
+
+  // AC5: proves the workload/distribution/bottlenecks queries never fire at all for an
+  // EMPLOYEE, not merely that their cards don't render -- inspects every fetched URL
+  it('only fetches /api/analytics/my-summary and /api/analytics/my-sla for an EMPLOYEE, never workload/distribution/bottlenecks', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+
+    renderAnalytics(employeeUser)
+
+    await waitFor(() => expect(within(getSummaryCard()).getByText('Açık')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('SLA Uyum Oranı')).toBeInTheDocument())
+
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url))
+    expect(urls.some((u) => u.includes('/api/analytics/my-summary'))).toBe(true)
+    expect(urls.some((u) => u.includes('/api/analytics/my-sla'))).toBe(true)
+    expect(urls.some((u) => u.includes('/api/analytics/workload'))).toBe(false)
+    expect(urls.some((u) => u.includes('/api/analytics/distribution'))).toBe(false)
+    expect(urls.some((u) => u.includes('/api/analytics/bottlenecks'))).toBe(false)
+  })
+
+  // AC6: EMPLOYEE's SLA card shares the same null-avg_resolution_hours empty state as
+  // FullAnalytics's SLA card
+  it('shows "Henüz tamamlanmış talep yok" for an EMPLOYEE with zero completed requests', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, { compliance_rate: 0, avg_resolution_hours: null }))
+
+    renderAnalytics(employeeUser)
+
+    await waitFor(() => expect(screen.getByText('Henüz tamamlanmış talep yok')).toBeInTheDocument())
+    expect(screen.queryByText('SLA Uyum Oranı')).not.toBeInTheDocument()
+    expect(screen.queryByText('%0')).not.toBeInTheDocument()
+  })
+
+  // Routing smoke test: proves Analytics correctly routes a non-EMPLOYEE role to
+  // FullAnalytics (the 28 pre-existing tests above already prove FullAnalytics itself
+  // renders its 5 sections correctly; this only proves the router's choice)
+  it('renders all 5 FullAnalytics sections for a non-EMPLOYEE role (routing smoke test)', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(200, makeSummary()))
+      .mockResolvedValueOnce(jsonResponse(200, makeSla()))
+      .mockResolvedValueOnce(jsonResponse(200, makeWorkload()))
+      .mockResolvedValueOnce(jsonResponse(200, makeDistribution()))
+      .mockResolvedValueOnce(jsonResponse(200, makeBottlenecks()))
+
+    renderAnalytics({ ...fakeUser, role: 'ADMIN', department_id: null })
+
+    await waitFor(() => expect(within(getSummaryCard()).getByText('Açık')).toBeInTheDocument())
+    expect(screen.getByText('SLA Performansı')).toBeInTheDocument()
+    expect(screen.getByText('Departman İş Yükü')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Durum Dağılımı')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('SLA İhlalleri (Departman)')).toBeInTheDocument())
   })
 })

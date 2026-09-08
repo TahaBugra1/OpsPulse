@@ -25,12 +25,13 @@ import {
 
 const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: LucideIcon }[]> = {
   EMPLOYEE: [
+    { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },
     { to: '/requests', label: 'Talepler', icon: ClipboardList },
   ],
   DEPARTMENT_AUTHORITY: [
+    { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },
     { to: '/queue', label: 'Kuyruk', icon: Inbox },
     { to: '/requests', label: 'Talepler', icon: ClipboardList },
-    { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },
   ],
   ADMIN: [
     { to: '/analytics', label: 'Genel Bakış', icon: LayoutDashboard },

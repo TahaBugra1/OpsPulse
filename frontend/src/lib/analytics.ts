@@ -42,6 +42,20 @@ export function useAnalyticsSla() {
   })
 }
 
+export function useEmployeeSummary() {
+  return useQuery({
+    queryKey: ['analytics', 'my-summary'],
+    queryFn: () => apiGet<AnalyticsSummary>('/api/analytics/my-summary'),
+  })
+}
+
+export function useEmployeeSla() {
+  return useQuery({
+    queryKey: ['analytics', 'my-sla'],
+    queryFn: () => apiGet<SlaMetrics>('/api/analytics/my-sla'),
+  })
+}
+
 export function useAnalyticsWorkload() {
   return useQuery({
     queryKey: ['analytics', 'workload'],

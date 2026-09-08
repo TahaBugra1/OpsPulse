@@ -8,6 +8,8 @@ import {
   useAnalyticsSla,
   useAnalyticsSummary,
   useAnalyticsWorkload,
+  useEmployeeSla,
+  useEmployeeSummary,
 } from './analytics'
 import type { BottlenecksData, DistributionData } from './analytics'
 
@@ -113,6 +115,43 @@ describe('analytics lib', () => {
     expect(result.current.data).toEqual(workload)
     const [url] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/analytics/workload')
+  })
+
+  // useEmployeeSummary() calls GET /api/analytics/my-summary and returns the exact object shape
+  it('useEmployeeSummary calls GET /api/analytics/my-summary and returns the data', async () => {
+    const summary = {
+      total_open: 2,
+      total_assigned: 1,
+      total_in_progress: 0,
+      total_completed: 3,
+      total_rejected: 0,
+      total_overdue: 1,
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, summary))
+
+    const { result } = renderHook(() => useEmployeeSummary(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(summary)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/analytics/my-summary')
+    expect(options?.method).toBe('GET')
+  })
+
+  // useEmployeeSla() calls GET /api/analytics/my-sla and returns the exact object shape,
+  // with a non-null avg_resolution_hours to prove the hook doesn't transform the value
+  it('useEmployeeSla calls GET /api/analytics/my-sla and returns the data untransformed', async () => {
+    const sla = { compliance_rate: 100, avg_resolution_hours: 2.25 }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, sla))
+
+    const { result } = renderHook(() => useEmployeeSla(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(sla)
+    const [url] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/analytics/my-sla')
   })
 
   describe('useAnalyticsDistribution', () => {

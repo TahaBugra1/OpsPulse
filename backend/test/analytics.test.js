@@ -642,3 +642,133 @@ test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY of a zero-request de
   assert.equal(res.body.stageDurations.length, 3);
   assert.ok(res.body.stageDurations.every((r) => r.avg_hours === null));
 });
+
+// employee-personal-summary AC1: GET /api/analytics/my-summary as EMPLOYEE reflects only that
+// employee's own created_by requests across a mix of statuses (OPEN/ASSIGNED/COMPLETED), and is
+// never affected by another employee's own request.
+test('GET /api/analytics/my-summary - EMPLOYEE sees only their own requests across a mix of statuses', async (t) => {
+  const employee = await registerEmployee();
+  const otherEmployee = await registerEmployee();
+
+  const openReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(openReq.status, 201, JSON.stringify(openReq.body));
+
+  const assignedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(assignedReq.status, 201, JSON.stringify(assignedReq.body));
+  const assignRes = await request(app)
+    .post(`/api/requests/${assignedReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignRes.status, 200, JSON.stringify(assignRes.body));
+
+  const completedReqId = await createAndCompleteRequest(employee.token, itAuthorityToken, passwordResetTypeId, 'LOW');
+
+  // another employee's own OPEN request must never affect the first employee's counts
+  const otherReq = await createRequestAs(otherEmployee.token, passwordResetTypeId, 'LOW');
+  assert.equal(otherReq.status, 201, JSON.stringify(otherReq.body));
+
+  registerCleanup(t, employee, [openReq.body.id, assignedReq.body.id, completedReqId]);
+  registerCleanup(t, otherEmployee, [otherReq.body.id]);
+
+  const res = await request(app)
+    .get('/api/analytics/my-summary')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.total_open, 1);
+  assert.equal(res.body.total_assigned, 1);
+  assert.equal(res.body.total_in_progress, 0);
+  assert.equal(res.body.total_completed, 1);
+  assert.equal(res.body.total_rejected, 0);
+  assert.equal(res.body.total_overdue, 0);
+});
+
+// employee-personal-summary AC2: GET /api/analytics/my-summary and /api/analytics/my-sla are
+// EMPLOYEE-only -- DEPARTMENT_AUTHORITY and ADMIN both get 403 on both endpoints.
+test('GET /api/analytics/my-summary and /api/analytics/my-sla - DEPARTMENT_AUTHORITY and ADMIN both get 403', async () => {
+  const summaryAsAuthority = await request(app)
+    .get('/api/analytics/my-summary')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+  assert.equal(summaryAsAuthority.status, 403);
+
+  const slaAsAuthority = await request(app)
+    .get('/api/analytics/my-sla')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+  assert.equal(slaAsAuthority.status, 403);
+
+  const summaryAsAdmin = await request(app)
+    .get('/api/analytics/my-summary')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(summaryAsAdmin.status, 403);
+
+  const slaAsAdmin = await request(app)
+    .get('/api/analytics/my-sla')
+    .set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(slaAsAdmin.status, 403);
+});
+
+// employee-personal-summary AC3 (critical isolation test): GET /api/analytics/my-sla reflects
+// only the requesting EMPLOYEE's own completed requests. Two different employees each complete
+// exactly one request -- employee A's on time, employee B's pushed late past its sla_due_at (same
+// technique as the existing "a late completion is not counted as on-time" test above). If my-sla
+// ever failed to scope by created_by, employee A's compliance_rate would be dragged down by
+// employee B's late completion (or vice versa) -- this makes the isolation check discriminating,
+// not just a "both return 200" check.
+test('GET /api/analytics/my-sla - reflects only the requesting EMPLOYEE\'s own completed requests, isolated from another employee\'s', async (t) => {
+  const employeeA = await registerEmployee();
+  const employeeB = await registerEmployee();
+
+  const requestIdA = await createAndCompleteRequest(employeeA.token, hrAuthorityToken, leaveRequestTypeId, 'HIGH');
+  const requestIdB = await createAndCompleteRequest(employeeB.token, hrAuthorityToken, leaveRequestTypeId, 'LOW');
+
+  // Push employee B's STATUS_CHANGED -> COMPLETED history row's created_at to just past its
+  // sla_due_at, so it counts as a late completion.
+  const slaDueRow = await pool.query('SELECT sla_due_at FROM requests WHERE id = $1', [requestIdB]);
+  const slaDueAt = slaDueRow.rows[0].sla_due_at;
+  await pool.query(
+    `UPDATE request_history
+     SET created_at = $1::timestamptz + interval '1 hour'
+     WHERE request_id = $2 AND action = 'STATUS_CHANGED' AND new_value = 'COMPLETED'`,
+    [slaDueAt, requestIdB]
+  );
+
+  registerCleanup(t, employeeA, [requestIdA]);
+  registerCleanup(t, employeeB, [requestIdB]);
+
+  const slaResA = await request(app)
+    .get('/api/analytics/my-sla')
+    .set('Authorization', `Bearer ${employeeA.token}`);
+  assert.equal(slaResA.status, 200, JSON.stringify(slaResA.body));
+  assert.equal(slaResA.body.compliance_rate, 100);
+  assert.ok(slaResA.body.avg_resolution_hours >= 0 && slaResA.body.avg_resolution_hours < 1);
+
+  const slaResB = await request(app)
+    .get('/api/analytics/my-sla')
+    .set('Authorization', `Bearer ${employeeB.token}`);
+  assert.equal(slaResB.status, 200, JSON.stringify(slaResB.body));
+  assert.equal(slaResB.body.compliance_rate, 0);
+});
+
+// employee-personal-summary AC4: GET /api/analytics/my-sla for an EMPLOYEE with zero completed
+// requests returns a zeroed payload, 200, no error (mirrors the existing department-scoped
+// "zero completed requests" test's shape above).
+test('GET /api/analytics/my-sla - EMPLOYEE with zero completed requests gets a zeroed payload', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+
+  const res = await request(app)
+    .get('/api/analytics/my-sla')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(res.body, { compliance_rate: 0, avg_resolution_hours: null });
+});
+
+// employee-personal-summary AC5: both new endpoints require authentication -- no Authorization
+// header at all gets 401 from authMiddleware before ever reaching the controller (authMiddleware
+// is mounted ahead of analyticsRoutes in server.js).
+test('GET /api/analytics/my-summary and /api/analytics/my-sla - no Authorization header gets 401 on both', async () => {
+  const summaryRes = await request(app).get('/api/analytics/my-summary');
+  assert.equal(summaryRes.status, 401);
+
+  const slaRes = await request(app).get('/api/analytics/my-sla');
+  assert.equal(slaRes.status, 401);
+});

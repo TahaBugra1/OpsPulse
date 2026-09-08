@@ -17,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useAuth } from '@/context/AuthContext'
 import {
   STAGE_LABELS,
   useAnalyticsBottlenecks,
@@ -24,6 +25,8 @@ import {
   useAnalyticsSla,
   useAnalyticsSummary,
   useAnalyticsWorkload,
+  useEmployeeSla,
+  useEmployeeSummary,
 } from '@/lib/analytics'
 import { PRIORITY_LABELS, STATUS_LABELS } from '@/lib/requests'
 
@@ -62,6 +65,115 @@ const STAGE_DURATION_CONFIG = {
 } satisfies ChartConfig
 
 export default function Analytics() {
+  const { user } = useAuth()
+
+  if (user?.role === 'EMPLOYEE') {
+    return <EmployeeAnalytics />
+  }
+
+  return <FullAnalytics />
+}
+
+function EmployeeAnalytics() {
+  const summaryQuery = useEmployeeSummary()
+  const slaQuery = useEmployeeSla()
+
+  return (
+    <div className="flex flex-col gap-4">
+      <h1 className="text-2xl font-semibold">Genel Bakış</h1>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Durum Özeti</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {summaryQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+          {summaryQuery.isError && (
+            <div className="flex flex-col items-start gap-3">
+              <p role="alert" className="text-sm font-normal text-destructive">
+                {summaryQuery.error instanceof Error
+                  ? summaryQuery.error.message
+                  : 'Özet verisi yüklenemedi, lütfen tekrar deneyin'}
+              </p>
+              <Button type="button" onClick={() => summaryQuery.refetch()}>
+                Tekrar Dene
+              </Button>
+            </div>
+          )}
+
+          {!summaryQuery.isPending && !summaryQuery.isError && summaryQuery.data && (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">{STATUS_LABELS.OPEN}</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_open}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">{STATUS_LABELS.ASSIGNED}</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_assigned}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">{STATUS_LABELS.IN_PROGRESS}</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_in_progress}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">{STATUS_LABELS.COMPLETED}</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_completed}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">{STATUS_LABELS.REJECTED}</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_rejected}</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">Gecikmiş</span>
+                <span className="text-2xl font-semibold">{summaryQuery.data.total_overdue}</span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>SLA Performansı</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {slaQuery.isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
+
+          {slaQuery.isError && (
+            <div className="flex flex-col items-start gap-3">
+              <p role="alert" className="text-sm font-normal text-destructive">
+                {slaQuery.error instanceof Error
+                  ? slaQuery.error.message
+                  : 'SLA verisi yüklenemedi, lütfen tekrar deneyin'}
+              </p>
+              <Button type="button" onClick={() => slaQuery.refetch()}>
+                Tekrar Dene
+              </Button>
+            </div>
+          )}
+
+          {!slaQuery.isPending && !slaQuery.isError && slaQuery.data && (
+            <>
+              {slaQuery.data.avg_resolution_hours === null ? (
+                <p className="text-muted-foreground">Henüz tamamlanmış talep yok</p>
+              ) : (
+                <dl className="grid grid-cols-2 gap-3 text-sm">
+                  <dt className="text-muted-foreground">SLA Uyum Oranı</dt>
+                  <dd>%{slaQuery.data.compliance_rate}</dd>
+                  <dt className="text-muted-foreground">Ortalama Çözüm Süresi</dt>
+                  <dd>{slaQuery.data.avg_resolution_hours} saat</dd>
+                </dl>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function FullAnalytics() {
   const summaryQuery = useAnalyticsSummary()
   const slaQuery = useAnalyticsSla()
   const workloadQuery = useAnalyticsWorkload()

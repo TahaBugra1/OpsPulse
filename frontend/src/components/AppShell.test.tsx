@@ -166,31 +166,27 @@ describe('AppShell', () => {
     vi.restoreAllMocks()
   })
 
-  // AC3: EMPLOYEE sidebar shows only "Talepler"
-  it('shows only "Talepler" in the nav for an EMPLOYEE user', () => {
+  // AC7 (employee-personal-summary): "Genel Bakış" is now shown to an EMPLOYEE too
+  // (previously EMPLOYEE saw only "Talepler" and never "Genel Bakış" -- that changed
+  // when EMPLOYEE got its own personal-summary analytics view) -- still never
+  // "Kuyruk"/"Kullanıcılar", which remain restricted to other roles
+  it('shows "Talepler" and "Genel Bakış", but not "Kuyruk"/"Kullanıcılar", in the nav for an EMPLOYEE user', () => {
     renderShell({ ...fakeUser, role: 'EMPLOYEE' })
 
     const nav = screen.getByRole('navigation')
     expect(within(nav).getByText('Talepler')).toBeInTheDocument()
+    expect(within(nav).getByText('Genel Bakış')).toBeInTheDocument()
     expect(within(nav).queryByText('Kuyruk')).not.toBeInTheDocument()
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
-  // AC7: "Genel Bakış" (analytics) is never shown to an EMPLOYEE
-  it('does not show "Genel Bakış" in the nav for an EMPLOYEE user', () => {
-    renderShell({ ...fakeUser, role: 'EMPLOYEE' })
-
-    const nav = screen.getByRole('navigation')
-    expect(within(nav).queryByText('Genel Bakış')).not.toBeInTheDocument()
-  })
-
-  // AC4: DEPARTMENT_AUTHORITY sidebar shows "Kuyruk", "Talepler", then "Genel Bakış", no "Kullanıcılar"
-  it('shows "Kuyruk" then "Talepler", and no "Kullanıcılar", for a DEPARTMENT_AUTHORITY user', () => {
+  // AC4: DEPARTMENT_AUTHORITY sidebar shows "Genel Bakış", "Kuyruk", then "Talepler", no "Kullanıcılar"
+  it('shows "Genel Bakış" then "Kuyruk" then "Talepler", and no "Kullanıcılar", for a DEPARTMENT_AUTHORITY user', () => {
     renderShell({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Kuyruk', 'Talepler', 'Genel Bakış'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Kuyruk', 'Talepler'])
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
