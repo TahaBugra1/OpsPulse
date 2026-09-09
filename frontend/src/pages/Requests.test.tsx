@@ -691,4 +691,111 @@ describe('Requests page', () => {
       expect(screen.getByLabelText('Ara')).toHaveValue('')
     })
   })
+
+  // ---------------------------------------------------------------------
+  // "Bana Atananlar" (assigned to me) filter — assigned-to-me-filter task
+  // ---------------------------------------------------------------------
+
+  describe('assigned to me', () => {
+    // AC6: the checkbox only renders for DEPARTMENT_AUTHORITY.
+    it('renders the "Bana Atananlar" checkbox for a DEPARTMENT_AUTHORITY user', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderRequests({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
+
+      await waitFor(() =>
+        expect(screen.getByRole('checkbox', { name: 'Bana Atananlar' })).toBeInTheDocument(),
+      )
+    })
+
+    // AC6: not for EMPLOYEE.
+    it('does not render the "Bana Atananlar" checkbox for an EMPLOYEE user', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
+
+      await waitFor(() => expect(screen.getByText('Henüz talep yok')).toBeInTheDocument())
+      expect(
+        screen.queryByRole('checkbox', { name: 'Bana Atananlar' }),
+      ).not.toBeInTheDocument()
+    })
+
+    // AC6: not for ADMIN.
+    it('does not render the "Bana Atananlar" checkbox for an ADMIN user', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderRequests({ ...fakeUser, role: 'ADMIN' })
+
+      await waitFor(() => expect(screen.getByText('Henüz talep yok')).toBeInTheDocument())
+      expect(
+        screen.queryByRole('checkbox', { name: 'Bana Atananlar' }),
+      ).not.toBeInTheDocument()
+    })
+
+    // AC7: toggling the checkbox on syncs assigned_to_me=true to the URL and
+    // fetches with it; toggling it back off removes it from the URL.
+    it('toggling the checkbox syncs assigned_to_me=true to the URL, and clears it when toggled back off', async () => {
+      const user = userEvent.setup()
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderRequests({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      const checkbox = screen.getByRole('checkbox', { name: 'Bana Atananlar' })
+      await user.click(checkbox)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('url-probe')).toHaveTextContent('assigned_to_me=true'),
+      )
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        expect(String(lastCall?.[0])).toContain('assigned_to_me=true')
+      })
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      await user.click(checkbox)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('url-probe')).not.toHaveTextContent('assigned_to_me'),
+      )
+    })
+
+    // AC7: turning the checkbox on removes any existing status from the URL.
+    it('turning on "Bana Atananlar" removes an existing status filter from the URL', async () => {
+      const user = userEvent.setup()
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderRequests({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      await user.selectOptions(screen.getByLabelText('Durum'), 'OPEN')
+      await waitFor(() => expect(screen.getByTestId('url-probe')).toHaveTextContent('status=OPEN'))
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      const checkbox = screen.getByRole('checkbox', { name: 'Bana Atananlar' })
+      await user.click(checkbox)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('url-probe')).toHaveTextContent('assigned_to_me=true'),
+      )
+      expect(screen.getByTestId('url-probe')).not.toHaveTextContent('status=OPEN')
+
+      // AC4 (frontend half): the Durum select is disabled while assigned_to_me
+      // is active.
+      expect(screen.getByLabelText('Durum')).toBeDisabled()
+    })
+  })
 })

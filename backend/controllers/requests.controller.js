@@ -54,7 +54,13 @@ async function patchRequestPriority(req, res) {
 async function getRequests(req, res) {
   try {
     const result = await listRequests(
-      { status: req.query.status, q: req.query.q, request_type_id: req.query.request_type_id, priority: req.query.priority },
+      {
+        status: req.query.status,
+        q: req.query.q,
+        request_type_id: req.query.request_type_id,
+        priority: req.query.priority,
+        assigned_to_me: req.query.assigned_to_me,
+      },
       req.user
     );
     res.status(200).json(result);

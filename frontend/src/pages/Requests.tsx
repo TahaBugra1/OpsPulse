@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
   Table,
@@ -45,6 +46,7 @@ export default function Requests() {
   const status = searchParams.get('status') ?? ''
   const requestTypeId = searchParams.get('request_type_id') ?? ''
   const priority = searchParams.get('priority') ?? ''
+  const assignedToMe = searchParams.get('assigned_to_me') === 'true'
   const urlQ = searchParams.get('q') ?? ''
 
   const [qInput, setQInput] = useState(urlQ)
@@ -73,9 +75,9 @@ export default function Requests() {
       ? requestTypes?.filter((requestType) => requestType.department_id === user.department_id)
       : requestTypes
 
-  const filters = { q: debouncedQ, status, request_type_id: requestTypeId, priority }
+  const filters = { q: debouncedQ, status, request_type_id: requestTypeId, priority, assigned_to_me: assignedToMe }
   const { data, isPending, isError, error, refetch } = useRequests(filters)
-  const hasActiveFilters = !!(debouncedQ || status || requestTypeId || priority)
+  const hasActiveFilters = !!(debouncedQ || status || requestTypeId || priority || assignedToMe)
 
   function handleStatusChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value
@@ -103,6 +105,22 @@ export default function Requests() {
       const next = new URLSearchParams(prev)
       if (value) next.set('priority', value)
       else next.delete('priority')
+      return next
+    })
+  }
+
+  function handleAssignedToMeChange(checked: boolean) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (checked) {
+        // Backend's assigned_to_me filter always scopes to ASSIGNED/IN_PROGRESS
+        // itself and ignores a separately-sent status param, so clear it here to
+        // keep the UI (and the disabled Durum dropdown) consistent with that.
+        next.set('assigned_to_me', 'true')
+        next.delete('status')
+      } else {
+        next.delete('assigned_to_me')
+      }
       return next
     })
   }
@@ -147,6 +165,7 @@ export default function Requests() {
                 className={SELECT_CLASSES}
                 value={status}
                 onChange={handleStatusChange}
+                disabled={assignedToMe}
               >
                 <option value="">Tümü</option>
                 {Object.entries(STATUS_LABELS).map(([value, label]) => (
@@ -192,6 +211,18 @@ export default function Requests() {
                 ))}
               </select>
             </div>
+            {user?.role === 'DEPARTMENT_AUTHORITY' && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="requests-assigned-to-me"
+                  checked={assignedToMe}
+                  onCheckedChange={handleAssignedToMeChange}
+                />
+                <label htmlFor="requests-assigned-to-me" className="text-sm font-medium">
+                  Bana Atananlar
+                </label>
+              </div>
+            )}
             {hasActiveFilters && (
               <Button type="button" variant="outline" onClick={handleClearFilters}>
                 Filtreleri Temizle

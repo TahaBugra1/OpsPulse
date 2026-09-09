@@ -388,6 +388,7 @@ async function listRequests(query, user) {
   const q = query && query.q;
   const requestTypeId = query && query.request_type_id;
   const priority = query && query.priority;
+  const assignedToMe = query && query.assigned_to_me === 'true';
 
   if (requestTypeId && !UUID_REGEX.test(requestTypeId)) {
     fail(400, 'Geçersiz talep türü');
@@ -407,7 +408,14 @@ async function listRequests(query, user) {
     conditions.push(`r.department_id = $${params.length}`);
   }
 
-  if (status) {
+  // assigned_to_me always means "my currently active work" (ASSIGNED/IN_PROGRESS)
+  // and is authoritative — a separately-sent status param is deliberately ignored
+  // while it's set (the frontend disables its Durum dropdown for the same reason).
+  if (assignedToMe) {
+    params.push(user.id);
+    conditions.push(`r.assigned_to = $${params.length}`);
+    conditions.push(`r.status IN ('ASSIGNED', 'IN_PROGRESS')`);
+  } else if (status) {
     params.push(status);
     conditions.push(`r.status = $${params.length}`);
   }

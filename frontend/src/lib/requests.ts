@@ -126,19 +126,21 @@ export interface RequestFilters {
   status?: string
   request_type_id?: string
   priority?: string
+  assigned_to_me?: boolean
 }
 
 export function useRequests(filters: RequestFilters = {}) {
-  const { q, status, request_type_id, priority } = filters
+  const { q, status, request_type_id, priority, assigned_to_me } = filters
 
   return useQuery({
-    queryKey: ['requests', q ?? '', status ?? '', request_type_id ?? '', priority ?? ''],
+    queryKey: ['requests', q ?? '', status ?? '', request_type_id ?? '', priority ?? '', assigned_to_me ? 'true' : ''],
     queryFn: () => {
       const params = new URLSearchParams()
       if (q) params.set('q', q)
       if (status) params.set('status', status)
       if (request_type_id) params.set('request_type_id', request_type_id)
       if (priority) params.set('priority', priority)
+      if (assigned_to_me) params.set('assigned_to_me', 'true')
       const query = params.toString()
       return apiGet<RequestListItem[]>(`/api/requests${query ? `?${query}` : ''}`)
     },
