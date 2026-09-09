@@ -2,6 +2,7 @@ const pool = require('./db');
 const { emitToRequestRoom, emitToUserRoom, emitToDepartmentQueue } = require('../sockets/emitter');
 
 const SLA_HOURS = { HIGH: 4, MEDIUM: 24, LOW: 72 };
+const DELETED_COMMENT_TEXT = 'Bu yorum silindi';
 
 function fail(status, message) {
   const err = new Error(message);
@@ -66,7 +67,7 @@ async function createRequest({ title, description, request_type_id, priority }, 
   const createdAt = new Date();
   const slaDueAt = computeSlaDueAt(createdAt, resolvedPriority);
 
-  return withTransaction(async (client) => {
+  const result = await withTransaction(async (client) => {
     const insertResult = await client.query(
       `INSERT INTO requests
         (title, description, request_type_id, department_id, created_by, priority, status, assigned_to, created_at, sla_due_at)
@@ -84,6 +85,14 @@ async function createRequest({ title, description, request_type_id, priority }, 
 
     return request;
   });
+
+  try {
+    const enriched = await fetchEnrichedRequest(result.id);
+    emitToDepartmentQueue(enriched.department_id, 'request:addedToQueue', enriched);
+  } catch (emitErr) {
+    console.error('request:addedToQueue emisyonu basarisiz oldu:', emitErr);
+  }
+  return result;
 }
 
 async function claimRequest(requestId, user) {
@@ -359,12 +368,33 @@ const COMMENT_SELECT = `
   JOIN users author ON author.id = c.author_id
 `;
 
+const HISTORY_SELECT = `
+  SELECT
+    h.*,
+    TRIM(CONCAT(actor.name, ' ', COALESCE(actor.surname, ''))) AS actor_name
+  FROM request_history h
+  JOIN users actor ON actor.id = h.actor_id
+`;
+
 const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function listRequests(query, user) {
   const status = query && query.status;
   if (status !== undefined && status !== null && status !== '' && !VALID_STATUSES.includes(status)) {
     fail(400, 'Geçersiz status değeri');
+  }
+
+  const q = query && query.q;
+  const requestTypeId = query && query.request_type_id;
+  const priority = query && query.priority;
+  const assignedToMe = query && query.assigned_to_me === 'true';
+
+  if (requestTypeId && !UUID_REGEX.test(requestTypeId)) {
+    fail(400, 'Geçersiz talep türü');
+  }
+  if (priority && !SLA_HOURS[priority]) {
+    fail(400, 'Geçersiz öncelik');
   }
 
   const conditions = [];
@@ -378,9 +408,31 @@ async function listRequests(query, user) {
     conditions.push(`r.department_id = $${params.length}`);
   }
 
-  if (status) {
+  // assigned_to_me always means "my currently active work" (ASSIGNED/IN_PROGRESS)
+  // and is authoritative — a separately-sent status param is deliberately ignored
+  // while it's set (the frontend disables its Durum dropdown for the same reason).
+  if (assignedToMe) {
+    params.push(user.id);
+    conditions.push(`r.assigned_to = $${params.length}`);
+    conditions.push(`r.status IN ('ASSIGNED', 'IN_PROGRESS')`);
+  } else if (status) {
     params.push(status);
     conditions.push(`r.status = $${params.length}`);
+  }
+
+  if (q) {
+    params.push(`%${q}%`);
+    conditions.push(`(r.title ILIKE $${params.length} OR r.description ILIKE $${params.length})`);
+  }
+
+  if (requestTypeId) {
+    params.push(requestTypeId);
+    conditions.push(`r.request_type_id = $${params.length}`);
+  }
+
+  if (priority) {
+    params.push(priority);
+    conditions.push(`r.priority = $${params.length}`);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -506,6 +558,120 @@ async function listComments(requestId, user) {
   return result.rows;
 }
 
+async function updateComment(requestId, commentId, content, user) {
+  const trimmedContent = typeof content === 'string' ? content.trim() : '';
+  if (!trimmedContent) {
+    fail(400, 'Yorum içeriği boş olamaz');
+  }
+  if (trimmedContent.length > 2000) {
+    fail(400, 'Yorum en fazla 2000 karakter olabilir');
+  }
+
+  await getRequestById(requestId, user);
+
+  let existing;
+  try {
+    existing = await pool.query(
+      'SELECT * FROM request_comments WHERE id = $1 AND request_id = $2',
+      [commentId, requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum güncellenemedi, lütfen tekrar deneyin');
+  }
+  const comment = existing.rows[0];
+  if (!comment) {
+    fail(404, 'Yorum bulunamadı');
+  }
+  if (comment.author_id !== user.id) {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+  if (comment.is_deleted) {
+    fail(409, 'Bu yorum zaten silinmiş');
+  }
+
+  let updateResult;
+  try {
+    updateResult = await pool.query(
+      `UPDATE request_comments SET content = $1 WHERE id = $2 RETURNING *`,
+      [trimmedContent, commentId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum güncellenemedi, lütfen tekrar deneyin');
+  }
+
+  let enrichedRow = updateResult.rows[0];
+  try {
+    const enrichedResult = await pool.query(`${COMMENT_SELECT} WHERE c.id = $1`, [commentId]);
+    enrichedRow = enrichedResult.rows[0];
+    emitToRequestRoom(requestId, 'request:commentUpdated', enrichedRow);
+  } catch (emitErr) {
+    console.error('request:commentUpdated emisyonu basarisiz oldu:', emitErr);
+  }
+
+  return enrichedRow;
+}
+
+async function deleteComment(requestId, commentId, user) {
+  await getRequestById(requestId, user);
+
+  let existing;
+  try {
+    existing = await pool.query(
+      'SELECT * FROM request_comments WHERE id = $1 AND request_id = $2',
+      [commentId, requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum silinemedi, lütfen tekrar deneyin');
+  }
+  const comment = existing.rows[0];
+  if (!comment) {
+    fail(404, 'Yorum bulunamadı');
+  }
+  if (comment.author_id !== user.id) {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+  if (comment.is_deleted) {
+    fail(409, 'Bu yorum zaten silinmiş');
+  }
+
+  let updateResult;
+  try {
+    updateResult = await pool.query(
+      `UPDATE request_comments SET content = $1, is_deleted = true WHERE id = $2 RETURNING *`,
+      [DELETED_COMMENT_TEXT, commentId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Yorum silinemedi, lütfen tekrar deneyin');
+  }
+
+  let enrichedRow = updateResult.rows[0];
+  try {
+    const enrichedResult = await pool.query(`${COMMENT_SELECT} WHERE c.id = $1`, [commentId]);
+    enrichedRow = enrichedResult.rows[0];
+    emitToRequestRoom(requestId, 'request:commentUpdated', enrichedRow);
+  } catch (emitErr) {
+    console.error('request:commentUpdated emisyonu basarisiz oldu:', emitErr);
+  }
+
+  return enrichedRow;
+}
+
+async function listHistory(requestId, user) {
+  await getRequestById(requestId, user);
+
+  let result;
+  try {
+    result = await pool.query(
+      `${HISTORY_SELECT} WHERE h.request_id = $1 ORDER BY h.created_at ASC`,
+      [requestId]
+    );
+  } catch (dbErr) {
+    fail(500, 'Geçmiş getirilemedi, lütfen tekrar deneyin');
+  }
+
+  return result.rows;
+}
+
 async function listRequestTypes() {
   let result;
   try {
@@ -527,5 +693,8 @@ module.exports = {
   getRequestById,
   addComment,
   listComments,
+  updateComment,
+  deleteComment,
+  listHistory,
   listRequestTypes,
 };

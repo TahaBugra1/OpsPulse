@@ -55,6 +55,8 @@ function sortedKeys(obj) {
 }
 
 let itAuthorityToken;
+let adminId;
+let adminToken;
 
 test.before(async () => {
   // Seed DEPARTMENT_AUTHORITY - read-only in this file, never modified/deleted.
@@ -65,11 +67,46 @@ test.before(async () => {
     .send({ email: 'it.authority@opspulse.com', password: 'sifre1234' });
   assert.equal(itLogin.status, 200, `IT authority login failed: ${JSON.stringify(itLogin.body)}`);
   itAuthorityToken = itLogin.body.token;
+
+  // Throwaway ADMIN, created directly via SQL (no API path can create one),
+  // reusing the seeded IT authority's password_hash so the plaintext password
+  // 'sifre1234' still works for login. See backend/test/analytics.test.js for
+  // the origin of this pattern.
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const adminEmail = `admin-${randomUUID()}@opspulse.com`;
+  const adminInsert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role) VALUES ($1, $2, $3, $4, 'ADMIN') RETURNING id`,
+    ['Test', 'Admin', adminEmail, pwRow.rows[0].password_hash]
+  );
+  adminId = adminInsert.rows[0].id;
+
+  const adminLogin = await request(app).post('/api/auth/login').send({ email: adminEmail, password: 'sifre1234' });
+  assert.equal(adminLogin.status, 200, `admin login failed: ${JSON.stringify(adminLogin.body)}`);
+  adminToken = adminLogin.body.token;
 });
 
 test.after(async () => {
+  await pool.query('DELETE FROM users WHERE id = $1', [adminId]);
   await pool.end();
 });
+
+// Helper: creates a throwaway DEPARTMENT_AUTHORITY via POST /api/users as the
+// throwaway admin, using a valid active department. Returns the response.
+async function postDeptAuthority(token, overrides = {}) {
+  const deptRes = await pool.query('SELECT id FROM departments WHERE is_active = true LIMIT 1');
+  const departmentId = deptRes.rows[0].id;
+  return request(app)
+    .post('/api/users')
+    .set('Authorization', `Bearer ${token}`)
+    .send({
+      name: 'New',
+      surname: 'Authority',
+      email: validEmail(),
+      password: 'sifre1234',
+      department_id: departmentId,
+      ...overrides,
+    });
+}
 
 // AC1: GET /api/users/me returns exactly the 7 profile fields for the caller.
 // department_id/department_name are null for a fresh EMPLOYEE, which is also the
@@ -469,4 +506,271 @@ test('GET/PATCH /api/users/me - a deactivated account returns 403 despite a stil
   // The rejected PATCH wrote nothing.
   const row = await readUserRow(employee.id);
   assert.equal(row.name, 'Test');
+});
+
+// ---------------------------------------------------------------------------
+// Admin-only user management: GET /api/users, POST /api/users,
+// PATCH /api/users/:id/deactivate (artifacts/admin-user-management/atdd.md)
+// ---------------------------------------------------------------------------
+
+// AC1: GET /api/users as ADMIN returns ALL users (active AND inactive), with
+// is_active/created_at present in each row.
+test('GET /api/users - ADMIN gets every user, active and inactive, with is_active/created_at', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+  await pool.query('UPDATE users SET is_active = false WHERE id = $1', [employee.id]);
+
+  const res = await request(app)
+    .get('/api/users')
+    .set('Authorization', `Bearer ${adminToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(Array.isArray(res.body));
+
+  const row = res.body.find((u) => u.id === employee.id);
+  assert.ok(row, 'the deactivated employee must still appear in the list');
+  assert.equal(row.is_active, false);
+  assert.equal(typeof row.created_at, 'string');
+
+  const activeRow = res.body.find((u) => u.id === adminId);
+  assert.ok(activeRow, 'active users must also appear');
+  assert.equal(activeRow.is_active, true);
+  assert.equal(typeof activeRow.created_at, 'string');
+});
+
+// AC2: GET /api/users as a non-ADMIN (EMPLOYEE and DEPARTMENT_AUTHORITY) -> 403.
+test('GET /api/users - EMPLOYEE and DEPARTMENT_AUTHORITY are both forbidden (403)', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const employeeRes = await request(app)
+    .get('/api/users')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(employeeRes.status, 403);
+  assert.equal(employeeRes.body.message, 'Bu işlem için yetkiniz yok');
+
+  const authorityRes = await request(app)
+    .get('/api/users')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+  assert.equal(authorityRes.status, 403);
+  assert.equal(authorityRes.body.message, 'Bu işlem için yetkiniz yok');
+});
+
+// AC3: POST /api/users with valid data creates a DEPARTMENT_AUTHORITY, returns
+// 201, is really persisted with a correctly-hashed password, and the new user
+// can actually log in with the plaintext password used at creation.
+test('POST /api/users - valid data creates a DEPARTMENT_AUTHORITY that is persisted and can log in', async (t) => {
+  const deptRes = await pool.query('SELECT id, name FROM departments WHERE is_active = true LIMIT 1');
+  const department = deptRes.rows[0];
+  const email = validEmail();
+  const password = 'sifre1234';
+
+  const res = await request(app)
+    .post('/api/users')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ name: 'Yeni', surname: 'Yetkili', email, password, department_id: department.id });
+
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.role, 'DEPARTMENT_AUTHORITY');
+  assert.equal(res.body.email, email);
+  t.after(() => deleteUser(res.body.id));
+
+  // Really persisted, with the exact requested department and a bcrypt hash
+  // (never the plaintext password).
+  const row = await pool.query(
+    'SELECT id, role, department_id, password_hash FROM users WHERE id = $1',
+    [res.body.id]
+  );
+  assert.equal(row.rows.length, 1);
+  assert.equal(row.rows[0].role, 'DEPARTMENT_AUTHORITY');
+  assert.equal(row.rows[0].department_id, department.id);
+  assert.notEqual(row.rows[0].password_hash, password);
+  assert.ok(row.rows[0].password_hash.startsWith('$2'), 'password must be bcrypt-hashed');
+
+  // The new user can really log in with the plaintext password.
+  const loginRes = await request(app)
+    .post('/api/auth/login')
+    .send({ email, password });
+  assert.equal(loginRes.status, 200, JSON.stringify(loginRes.body));
+  assert.equal(loginRes.body.user.id, res.body.id);
+  assert.equal(loginRes.body.user.role, 'DEPARTMENT_AUTHORITY');
+});
+
+// AC4 (THE MOST IMPORTANT TEST IN THIS TASK): a body that additionally
+// includes role: 'ADMIN' (or any other role) is completely ignored - the
+// created user is still DEPARTMENT_AUTHORITY in the database.
+test('POST /api/users - a role field in the body (e.g. role: ADMIN) is ignored, never escalates privilege', async (t) => {
+  const attemptedRoles = ['ADMIN', 'EMPLOYEE', 'DEPARTMENT_AUTHORITY', 'SUPERADMIN', 'admin'];
+
+  for (const attemptedRole of attemptedRoles) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await postDeptAuthority(adminToken, { role: attemptedRole });
+    assert.equal(res.status, 201, `${attemptedRole}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.role, 'DEPARTMENT_AUTHORITY', `response role escalated via body.role=${attemptedRole}`);
+    t.after(() => deleteUser(res.body.id));
+
+    // Assert from the database, not just the response projection.
+    // eslint-disable-next-line no-await-in-loop
+    const row = await pool.query('SELECT role FROM users WHERE id = $1', [res.body.id]);
+    assert.equal(
+      row.rows[0].role,
+      'DEPARTMENT_AUTHORITY',
+      `DB role must remain DEPARTMENT_AUTHORITY despite body.role=${attemptedRole}`
+    );
+  }
+});
+
+// AC5: PATCH /api/users/:id/deactivate as ADMIN on another user's id sets
+// is_active = false (verified via DB read), returns 200, and the row still
+// exists (never deleted).
+test('PATCH /api/users/:id/deactivate - ADMIN deactivates another user, row persists with is_active=false', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const res = await request(app)
+    .patch(`/api/users/${employee.id}/deactivate`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.is_active, false);
+
+  const row = await pool.query('SELECT id, is_active FROM users WHERE id = $1', [employee.id]);
+  assert.equal(row.rows.length, 1, 'the user row must still exist - never deleted');
+  assert.equal(row.rows[0].is_active, false);
+});
+
+// AC6: PATCH /api/users/:id/deactivate where :id equals the calling ADMIN's
+// own id returns 400 and does NOT deactivate them.
+test('PATCH /api/users/:id/deactivate - an admin cannot deactivate themselves', async () => {
+  const res = await request(app)
+    .patch(`/api/users/${adminId}/deactivate`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Kendi hesabınızı pasife alamazsınız');
+
+  const row = await pool.query('SELECT is_active FROM users WHERE id = $1', [adminId]);
+  assert.equal(row.rows[0].is_active, true, 'the admin must still be active');
+});
+
+// AC2 corollary: POST and PATCH deactivate are equally admin-gated (403 for
+// non-ADMIN), matching the GET /api/users role check.
+test('POST /api/users and PATCH /api/users/:id/deactivate - non-ADMIN callers get 403', async (t) => {
+  const employee = await registerEmployee();
+  const target = await registerEmployee();
+  t.after(() => deleteUser(target.id));
+  t.after(() => deleteUser(employee.id));
+
+  const postRes = await postDeptAuthority(employee.token);
+  assert.equal(postRes.status, 403);
+  assert.equal(postRes.body.message, 'Bu işlem için yetkiniz yok');
+
+  const patchRes = await request(app)
+    .patch(`/api/users/${target.id}/deactivate`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(patchRes.status, 403);
+  assert.equal(patchRes.body.message, 'Bu işlem için yetkiniz yok');
+
+  const row = await pool.query('SELECT is_active FROM users WHERE id = $1', [target.id]);
+  assert.equal(row.rows[0].is_active, true, 'a forbidden PATCH must not deactivate the target');
+});
+
+// AC8: validation edge cases each return 4xx with a clear message and create
+// no row.
+test('POST /api/users - duplicate email returns 409 and creates no additional row', async (t) => {
+  const first = await postDeptAuthority(adminToken);
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  t.after(() => deleteUser(first.body.id));
+
+  const dupe = await postDeptAuthority(adminToken, { email: first.body.email });
+  assert.equal(dupe.status, 409, JSON.stringify(dupe.body));
+  assert.equal(dupe.body.message, 'Bu email zaten kayıtlı');
+
+  const count = await pool.query('SELECT COUNT(*)::int AS n FROM users WHERE email = $1', [first.body.email]);
+  assert.equal(count.rows[0].n, 1, 'no second row may be created for the same email');
+});
+
+test('POST /api/users - wrong email domain returns 400 and creates no row', async () => {
+  const email = `test-${randomUUID()}@not-the-allowed-domain.example`;
+  const res = await postDeptAuthority(adminToken, { email });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu email domaini ile kullanıcı oluşturulamaz');
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
+});
+
+test('POST /api/users - password under 8 chars returns 400 and creates no row', async () => {
+  const email = validEmail();
+  const res = await postDeptAuthority(adminToken, { email, password: 'short1' });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Şifre en az 8 karakter olmalı');
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
+});
+
+test('POST /api/users - missing department_id returns 400 and creates no row', async () => {
+  const email = validEmail();
+  const res = await request(app)
+    .post('/api/users')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ name: 'No', surname: 'Department', email, password: 'sifre1234' });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Departman seçilmeli');
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
+});
+
+test('POST /api/users - nonexistent department_id returns 400 and creates no row', async () => {
+  const email = validEmail();
+  const res = await postDeptAuthority(adminToken, { email, department_id: randomUUID() });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Geçersiz departman');
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
+});
+
+test('POST /api/users - inactive department_id returns 400 and creates no row', async (t) => {
+  const inactiveDept = await pool.query(
+    `INSERT INTO departments (name, is_active) VALUES ($1, false) RETURNING id`,
+    [`Throwaway Inactive Dept ${randomUUID()}`]
+  );
+  const inactiveDeptId = inactiveDept.rows[0].id;
+  t.after(async () => {
+    await pool.query('DELETE FROM departments WHERE id = $1', [inactiveDeptId]);
+  });
+
+  const email = validEmail();
+  const res = await postDeptAuthority(adminToken, { email, department_id: inactiveDeptId });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Geçersiz departman');
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
+});
+
+test('POST /api/users - missing name returns 400 and creates no row', async () => {
+  const email = validEmail();
+  const deptRes = await pool.query('SELECT id FROM departments WHERE is_active = true LIMIT 1');
+  const res = await request(app)
+    .post('/api/users')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ surname: 'NoName', email, password: 'sifre1234', department_id: deptRes.rows[0].id });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, NAME_ERROR);
+
+  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+  assert.equal(check.rows.length, 0);
 });

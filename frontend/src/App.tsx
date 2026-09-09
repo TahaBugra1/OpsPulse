@@ -6,12 +6,15 @@ import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
 import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
+import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
-import ComingSoon from '@/pages/ComingSoon'
+import AdminUsers from '@/pages/AdminUsers'
+import Analytics from '@/pages/Analytics'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
 import NotFound from '@/pages/NotFound'
 import Profile from '@/pages/Profile'
+import Queue from '@/pages/Queue'
 import RequestDetail from '@/pages/RequestDetail'
 import Requests from '@/pages/Requests'
 
@@ -42,25 +45,28 @@ function App() {
       <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
         <AuthProvider>
           <AuthWiring />
-          <BrowserRouter>
-            <Routes>
-              <Route element={<ProtectedRoute />}>
-                <Route element={<AppShell />}>
-                  <Route index element={<RootRedirect />} />
-                  <Route path="/requests" element={<Requests />} />
-                  <Route path="/requests/new" element={<NewRequest />} />
-                  <Route path="/requests/:id" element={<RequestDetail />} />
-                  <Route path="/profile" element={<Profile />} />
-                  <Route path="/queue" element={<ComingSoon title="Kuyruk" />} />
-                  <Route path="/admin/users" element={<ComingSoon title="Kullanıcılar" />} />
+          <SocketProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route element={<ProtectedRoute />}>
+                  <Route element={<AppShell />}>
+                    <Route index element={<RootRedirect />} />
+                    <Route path="/analytics" element={<Analytics />} />
+                    <Route path="/requests" element={<Requests />} />
+                    <Route path="/requests/new" element={<NewRequest />} />
+                    <Route path="/requests/:id" element={<RequestDetail />} />
+                    <Route path="/profile" element={<Profile />} />
+                    <Route path="/queue" element={<Queue />} />
+                    <Route path="/admin/users" element={<AdminUsers />} />
+                  </Route>
                 </Route>
-              </Route>
-              <Route element={<GuestOnlyRoute />}>
-                <Route path="/login" element={<Login />} />
-              </Route>
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
+                <Route element={<GuestOnlyRoute />}>
+                  <Route path="/login" element={<Login />} />
+                </Route>
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </SocketProvider>
           <Toaster />
         </AuthProvider>
       </GoogleOAuthProvider>

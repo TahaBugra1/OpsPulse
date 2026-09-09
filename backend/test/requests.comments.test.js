@@ -406,3 +406,361 @@ test('POST /api/requests/:id/comments - ADMIN gets 403; GET /api/requests/:id/co
 // AC12: SKIPPED - DB-outage/transaction-rollback simulation for the comment+notification
 // transaction is impractical to simulate reliably against a real local Postgres instance,
 // same reasoning as the prior tasks' skipped ACs (auth's AC9, request-service's AC12).
+
+// AC13: comment author edits their own comment -> 200, content/updated_at change in the
+// response AND in the DB directly, author_name still present, is_deleted stays false.
+test('PATCH /api/requests/:id/comments/:commentId - author editing own comment gets 200, content and updated_at change', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Original content.' });
+  assert.equal(commentRes.status, 201, JSON.stringify(commentRes.body));
+
+  await sleep(50);
+
+  const editRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Edited content.' });
+
+  assert.equal(editRes.status, 200, JSON.stringify(editRes.body));
+  assert.equal(editRes.body.content, 'Edited content.');
+  assert.notEqual(editRes.body.updated_at, editRes.body.created_at);
+  assert.equal(editRes.body.author_name, 'Test Employee');
+  assert.equal(editRes.body.is_deleted, false);
+
+  const dbRow = await pool.query('SELECT * FROM request_comments WHERE id = $1', [commentRes.body.id]);
+  assert.equal(dbRow.rows.length, 1);
+  assert.equal(dbRow.rows[0].content, 'Edited content.');
+  assert.notEqual(dbRow.rows[0].updated_at.toISOString(), dbRow.rows[0].created_at.toISOString());
+  assert.equal(dbRow.rows[0].is_deleted, false);
+});
+
+// AC14: a non-author (a different EMPLOYEE) attempting to PATCH someone else's comment -> 403,
+// and the DB row is left completely unchanged (proves the write never happened).
+test('PATCH /api/requests/:id/comments/:commentId - non-author gets 403, DB row unchanged', async (t) => {
+  const owner = await registerEmployee();
+  const otherEmployee = await registerEmployee();
+
+  const created = await createRequestAs(owner.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, owner, [created.body.id]);
+  registerCleanup(t, otherEmployee, []);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${owner.token}`)
+    .send({ content: 'Owner original content.' });
+  assert.equal(commentRes.status, 201);
+
+  const editRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${otherEmployee.token}`)
+    .send({ content: 'Trying to hijack this comment.' });
+  assert.equal(editRes.status, 403, JSON.stringify(editRes.body));
+
+  const dbRow = await pool.query('SELECT * FROM request_comments WHERE id = $1', [commentRes.body.id]);
+  assert.equal(dbRow.rows[0].content, 'Owner original content.');
+});
+
+// AC15: empty/whitespace-only content on PATCH -> 400; content over 2000 chars on PATCH -> 400
+// (mirrors AC7/AC8 for POST, applied to the edit endpoint).
+test('PATCH /api/requests/:id/comments/:commentId - empty/whitespace or over-length content returns 400', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Valid content.' });
+  assert.equal(commentRes.status, 201);
+
+  const emptyRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: '' });
+  assert.equal(emptyRes.status, 400);
+
+  const whitespaceRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: '    ' });
+  assert.equal(whitespaceRes.status, 400);
+
+  const tooLongRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'a'.repeat(2001) });
+  assert.equal(tooLongRes.status, 400);
+});
+
+// AC16: comment author deletes their own comment -> 200, tombstoned response (content is
+// exactly the fixed Turkish placeholder, is_deleted true), but the row STILL EXISTS in the
+// DB afterward (a real DELETE would remove it - this is a soft tombstone, not a hard delete).
+test('DELETE /api/requests/:id/comments/:commentId - author deleting own comment gets 200 tombstone, row still exists in DB', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'This will be deleted.' });
+  assert.equal(commentRes.status, 201);
+
+  const deleteRes = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+
+  assert.equal(deleteRes.status, 200, JSON.stringify(deleteRes.body));
+  assert.equal(deleteRes.body.content, 'Bu yorum silindi');
+  assert.equal(deleteRes.body.is_deleted, true);
+
+  const countRow = await pool.query('SELECT COUNT(*) FROM request_comments WHERE id = $1', [commentRes.body.id]);
+  assert.equal(Number(countRow.rows[0].count), 1);
+});
+
+// AC17: a non-author attempting to DELETE someone else's comment -> 403, and the DB row
+// remains completely untouched (is_deleted still false, original content intact).
+test('DELETE /api/requests/:id/comments/:commentId - non-author gets 403, DB row untouched', async (t) => {
+  const owner = await registerEmployee();
+  const otherEmployee = await registerEmployee();
+
+  const created = await createRequestAs(owner.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, owner, [created.body.id]);
+  registerCleanup(t, otherEmployee, []);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${owner.token}`)
+    .send({ content: 'Owner original content.' });
+  assert.equal(commentRes.status, 201);
+
+  const deleteRes = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${otherEmployee.token}`)
+    .send();
+  assert.equal(deleteRes.status, 403, JSON.stringify(deleteRes.body));
+
+  const dbRow = await pool.query('SELECT * FROM request_comments WHERE id = $1', [commentRes.body.id]);
+  assert.equal(dbRow.rows[0].is_deleted, false);
+  assert.equal(dbRow.rows[0].content, 'Owner original content.');
+});
+
+// AC18: double-delete -> 409 on the second DELETE; editing an already-deleted comment -> 409
+// too. Both error messages mention the comment is already deleted.
+test('DELETE then DELETE/PATCH again on an already-deleted comment - both return 409', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'To be deleted twice.' });
+  assert.equal(commentRes.status, 201);
+
+  const firstDelete = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(firstDelete.status, 200, JSON.stringify(firstDelete.body));
+
+  const secondDelete = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(secondDelete.status, 409, JSON.stringify(secondDelete.body));
+  assert.ok(/zaten silinmiş/.test(secondDelete.body.message ?? ''), JSON.stringify(secondDelete.body));
+
+  const editAfterDelete = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Trying to edit a deleted comment.' });
+  assert.equal(editAfterDelete.status, 409, JSON.stringify(editAfterDelete.body));
+  assert.ok(/zaten silinmiş/.test(editAfterDelete.body.message ?? ''), JSON.stringify(editAfterDelete.body));
+});
+
+// AC19: PATCH/DELETE with a nonexistent commentId (but a real, existing requestId) -> 404 for both.
+test('PATCH and DELETE /api/requests/:id/comments/:commentId - nonexistent commentId returns 404', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const nonexistentCommentId = randomUUID();
+
+  const editRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${nonexistentCommentId}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Edit attempt.' });
+  assert.equal(editRes.status, 404, JSON.stringify(editRes.body));
+
+  const deleteRes = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${nonexistentCommentId}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(deleteRes.status, 404, JSON.stringify(deleteRes.body));
+});
+
+// AC20: a commentId that genuinely exists, but belongs to a DIFFERENT request, must 404 when
+// addressed through this request's URL - proves the service's "WHERE id = $1 AND request_id = $2"
+// guard is doing real scoping, not just an unscoped id lookup.
+test('PATCH and DELETE /api/requests/:id/comments/:commentId - commentId belonging to a different request returns 404', async (t) => {
+  const employee = await registerEmployee();
+
+  const requestA = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(requestA.status, 201);
+  const requestB = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(requestB.status, 201);
+  registerCleanup(t, employee, [requestA.body.id, requestB.body.id]);
+
+  const commentOnA = await request(app)
+    .post(`/api/requests/${requestA.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Comment that lives on request A.' });
+  assert.equal(commentOnA.status, 201);
+
+  const editThroughB = await request(app)
+    .patch(`/api/requests/${requestB.body.id}/comments/${commentOnA.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Cross-request edit attempt.' });
+  assert.equal(editThroughB.status, 404, JSON.stringify(editThroughB.body));
+
+  const deleteThroughB = await request(app)
+    .delete(`/api/requests/${requestB.body.id}/comments/${commentOnA.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(deleteThroughB.status, 404, JSON.stringify(deleteThroughB.body));
+
+  // Sanity: the comment is still untouched when addressed correctly through request A.
+  const dbRow = await pool.query('SELECT * FROM request_comments WHERE id = $1', [commentOnA.body.id]);
+  assert.equal(dbRow.rows[0].content, 'Comment that lives on request A.');
+  assert.equal(dbRow.rows[0].is_deleted, false);
+});
+
+// AC21: real-time socket delivery of request:commentUpdated cannot be asserted at this
+// HTTP-integration test tier (no socket test harness exists in this file - same gap
+// acknowledged by AC12 above), so the practical proxy used here is confirming the HTTP
+// response body already contains the full enriched row (author_name, updated_at, is_deleted)
+// that emitToRequestRoom broadcasts verbatim - i.e. everything the socket event carries is
+// already proven correct by the edit/delete happy-path tests (AC13, AC16) above.
+test('PATCH/DELETE responses already carry the full enriched row that request:commentUpdated broadcasts', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Checking enriched fields.' });
+  assert.equal(commentRes.status, 201);
+
+  const editRes = await request(app)
+    .patch(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Enriched fields after edit.' });
+  assert.equal(editRes.status, 200, JSON.stringify(editRes.body));
+  assert.ok(editRes.body.author_name);
+  assert.ok('updated_at' in editRes.body);
+  assert.ok('is_deleted' in editRes.body);
+  assert.ok('request_id' in editRes.body);
+
+  const deleteRes = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(deleteRes.status, 200, JSON.stringify(deleteRes.body));
+  assert.ok(deleteRes.body.author_name);
+  assert.ok('updated_at' in deleteRes.body);
+  assert.equal(deleteRes.body.is_deleted, true);
+});
+
+// AC22: editing/deleting a comment is still allowed after the parent request has reached a
+// terminal status (COMPLETED or REJECTED) - mirrors AC9's approach but proves no request-status
+// check blocks comment mutation for the comment's own author.
+test('PATCH and DELETE /api/requests/:id/comments/:commentId - still succeed after the request reaches a terminal status', async (t) => {
+  const employee = await registerEmployee();
+
+  const completedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(completedReq.status, 201);
+  const rejectedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(rejectedReq.status, 201);
+  registerCleanup(t, employee, [completedReq.body.id, rejectedReq.body.id]);
+
+  const commentOnCompleted = await request(app)
+    .post(`/api/requests/${completedReq.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Comment before completion.' });
+  assert.equal(commentOnCompleted.status, 201);
+
+  const commentOnRejected = await request(app)
+    .post(`/api/requests/${rejectedReq.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Comment before rejection.' });
+  assert.equal(commentOnRejected.status, 201);
+
+  await request(app)
+    .post(`/api/requests/${completedReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'IN_PROGRESS' });
+  const completeRes = await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'COMPLETED' });
+  assert.equal(completeRes.status, 200, JSON.stringify(completeRes.body));
+
+  const rejectRes = await request(app)
+    .patch(`/api/requests/${rejectedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'REJECTED', note: 'Not applicable' });
+  assert.equal(rejectRes.status, 200, JSON.stringify(rejectRes.body));
+
+  // Same employee, still the comment's author, edits then deletes it on the now-COMPLETED request.
+  const editOnCompleted = await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/comments/${commentOnCompleted.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Edited after completion.' });
+  assert.equal(editOnCompleted.status, 200, JSON.stringify(editOnCompleted.body));
+
+  const deleteOnCompleted = await request(app)
+    .delete(`/api/requests/${completedReq.body.id}/comments/${commentOnCompleted.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(deleteOnCompleted.status, 200, JSON.stringify(deleteOnCompleted.body));
+
+  // And on the now-REJECTED request.
+  const editOnRejected = await request(app)
+    .patch(`/api/requests/${rejectedReq.body.id}/comments/${commentOnRejected.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Edited after rejection.' });
+  assert.equal(editOnRejected.status, 200, JSON.stringify(editOnRejected.body));
+
+  const deleteOnRejected = await request(app)
+    .delete(`/api/requests/${rejectedReq.body.id}/comments/${commentOnRejected.body.id}`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(deleteOnRejected.status, 200, JSON.stringify(deleteOnRejected.body));
+});

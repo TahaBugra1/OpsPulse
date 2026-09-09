@@ -89,6 +89,31 @@ describe('App routing', () => {
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
   })
 
+  // AC9: an authenticated ADMIN visitor lands on /analytics, not /requests
+  it('redirects an authenticated ADMIN visitor to /analytics, not /requests', async () => {
+    const admin: AuthUser = { ...fakeUser, role: 'ADMIN', department_id: null }
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          total_open: 0,
+          total_assigned: 0,
+          total_in_progress: 0,
+          total_completed: 0,
+          total_rejected: 0,
+          total_overdue: 0,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { compliance_rate: 0, avg_resolution_hours: null }))
+      .mockResolvedValueOnce(jsonResponse(200, []))
+    seedSession('tok-123', admin)
+    setPath('/')
+
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Genel Bakış' })).toBeInTheDocument())
+    expect(screen.queryByText('Tüm Talepler')).not.toBeInTheDocument()
+  })
+
   // AC5 / AC8: a 401 from any non-auth API call logs the user out (session storage cleared),
   // clears the TanStack Query cache, and the user ends up redirected to /login.
   it('logs out, clears the query cache, and redirects to /login on a generic 401', async () => {

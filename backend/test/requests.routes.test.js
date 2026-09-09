@@ -70,6 +70,26 @@ let itAuthorityId;
 let hrAuthorityToken;
 let passwordResetTypeId; // IT
 let leaveRequestTypeId; // HR
+let itDepartmentId;
+
+// Inserts a throwaway second DEPARTMENT_AUTHORITY in the IT department, reusing
+// it.authority@opspulse.com's password_hash so plaintext 'sifre1234' still works,
+// then logs in via supertest. Ported from realtime-queue.test.js's identical helper.
+async function createSecondItAuthority() {
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const email = `it-authority-2-${randomUUID()}@opspulse.com`;
+  const insertRes = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
+    ['Test', 'SecondItAuthority', email, pwRow.rows[0].password_hash, itDepartmentId]
+  );
+  const id = insertRes.rows[0].id;
+
+  const loginRes = await request(app).post('/api/auth/login').send({ email, password: 'sifre1234' });
+  assert.equal(loginRes.status, 200, `second IT authority login failed: ${JSON.stringify(loginRes.body)}`);
+
+  return { id, email, token: loginRes.body.token };
+}
 
 test.before(async () => {
   const itLogin = await request(app)
@@ -87,6 +107,7 @@ test.before(async () => {
 
   const prType = await pool.query("SELECT id, department_id FROM request_types WHERE name = 'Password Reset'");
   passwordResetTypeId = prType.rows[0].id;
+  itDepartmentId = prType.rows[0].department_id;
 
   const lrType = await pool.query("SELECT id, department_id FROM request_types WHERE name = 'Leave Request'");
   leaveRequestTypeId = lrType.rows[0].id;
@@ -446,4 +467,329 @@ test('POST /api/requests - nonexistent request_type_id returns 404, inactive one
 
   const inactiveRes = await createRequestAs(employee.token, leaveRequestTypeId, 'LOW');
   assert.equal(inactiveRes.status, 400);
+});
+
+// ---------------------------------------------------------------------
+// GET /api/requests?assigned_to_me=true — assigned-to-me filter
+// ---------------------------------------------------------------------
+
+// AC1: a DEPARTMENT_AUTHORITY with requests in several statuses (some claimed
+// by them, some not) - assigned_to_me=true returns only their own
+// ASSIGNED/IN_PROGRESS requests, excluding their own COMPLETED/REJECTED ones
+// and excluding a still-OPEN request they haven't claimed.
+test('GET /api/requests?assigned_to_me=true - returns only the caller\'s own ASSIGNED/IN_PROGRESS requests', async (t) => {
+  const employee = await registerEmployee();
+
+  const openReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const assignedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const inProgressReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const completedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const rejectedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(openReq.status, 201);
+  assert.equal(assignedReq.status, 201);
+  assert.equal(inProgressReq.status, 201);
+  assert.equal(completedReq.status, 201);
+  assert.equal(rejectedReq.status, 201);
+
+  registerCleanup(t, employee, [
+    openReq.body.id,
+    assignedReq.body.id,
+    inProgressReq.body.id,
+    completedReq.body.id,
+    rejectedReq.body.id,
+  ]);
+
+  // Claim all four non-OPEN ones as itAuthority.
+  for (const req of [assignedReq, inProgressReq, completedReq, rejectedReq]) {
+    // eslint-disable-next-line no-await-in-loop
+    const assignRes = await request(app)
+      .post(`/api/requests/${req.body.id}/assign`)
+      .set('Authorization', `Bearer ${itAuthorityToken}`)
+      .send();
+    assert.equal(assignRes.status, 200);
+  }
+
+  const toInProgress = await request(app)
+    .patch(`/api/requests/${inProgressReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'IN_PROGRESS' });
+  assert.equal(toInProgress.status, 200);
+
+  await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'IN_PROGRESS' });
+  const toCompleted = await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'COMPLETED' });
+  assert.equal(toCompleted.status, 200);
+
+  const toRejected = await request(app)
+    .patch(`/api/requests/${rejectedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'REJECTED', note: 'Not needed' });
+  assert.equal(toRejected.status, 200);
+
+  const res = await request(app)
+    .get('/api/requests?assigned_to_me=true')
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const ids = res.body.map((r) => r.id);
+  assert.ok(ids.includes(assignedReq.body.id), 'ASSIGNED request should be included');
+  assert.ok(ids.includes(inProgressReq.body.id), 'IN_PROGRESS request should be included');
+  assert.ok(!ids.includes(openReq.body.id), 'OPEN (unclaimed) request should be excluded');
+  assert.ok(!ids.includes(completedReq.body.id), 'COMPLETED request should be excluded');
+  assert.ok(!ids.includes(rejectedReq.body.id), 'REJECTED request should be excluded');
+});
+
+// AC2: THE MOST IMPORTANT TEST — two DEPARTMENT_AUTHORITY users in the SAME
+// department: assigned_to_me=true for A never returns anything claimed by B,
+// and vice versa. Also proves there is no client-supplied way (user_id /
+// assigned_to query params) to see someone else's assigned requests - only
+// the authenticated caller's own id is ever used.
+test('GET /api/requests?assigned_to_me=true - isolates two same-department authorities from each other, with no client-supplied override', async (t) => {
+  const employee = await registerEmployee();
+  const secondAuthority = await createSecondItAuthority();
+
+  const reqForA = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const reqForB = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(reqForA.status, 201);
+  assert.equal(reqForB.status, 201);
+  // Requests (and their assigned_to references) must be deleted BEFORE the
+  // throwaway second authority user row, respecting the FK RESTRICT chain -
+  // node:test runs t.after hooks in FIFO/registration order, so registerCleanup
+  // (which deletes requests, then the throwaway employee) must be registered
+  // first, and the second authority's own deletion after it.
+  registerCleanup(t, employee, [reqForA.body.id, reqForB.body.id]);
+  t.after(async () => {
+    await pool.query('DELETE FROM users WHERE id = $1', [secondAuthority.id]);
+  });
+
+  const assignA = await request(app)
+    .post(`/api/requests/${reqForA.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignA.status, 200);
+
+  const assignB = await request(app)
+    .post(`/api/requests/${reqForB.body.id}/assign`)
+    .set('Authorization', `Bearer ${secondAuthority.token}`)
+    .send();
+  assert.equal(assignB.status, 200);
+
+  const resA = await request(app)
+    .get('/api/requests?assigned_to_me=true')
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(resA.status, 200, JSON.stringify(resA.body));
+  const idsA = resA.body.map((r) => r.id);
+  assert.ok(idsA.includes(reqForA.body.id), "A's assigned_to_me should include A's own claimed request");
+  assert.ok(!idsA.includes(reqForB.body.id), "A's assigned_to_me must never include B's claimed request");
+
+  const resB = await request(app)
+    .get('/api/requests?assigned_to_me=true')
+    .set('Authorization', `Bearer ${secondAuthority.token}`)
+    .send();
+  assert.equal(resB.status, 200, JSON.stringify(resB.body));
+  const idsB = resB.body.map((r) => r.id);
+  assert.ok(idsB.includes(reqForB.body.id), "B's assigned_to_me should include B's own claimed request");
+  assert.ok(!idsB.includes(reqForA.body.id), "B's assigned_to_me must never include A's claimed request");
+
+  // No way to specify whose requests to see other than "the authenticated
+  // caller" - user_id/assigned_to query params do nothing; A still only sees
+  // its own claimed request even when trying to ask for B's.
+  const spoofAttempt = await request(app)
+    .get(`/api/requests?assigned_to_me=true&user_id=${secondAuthority.id}&assigned_to=${secondAuthority.id}`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(spoofAttempt.status, 200, JSON.stringify(spoofAttempt.body));
+  const spoofIds = spoofAttempt.body.map((r) => r.id);
+  assert.ok(spoofIds.includes(reqForA.body.id), 'unrecognized query params must not change the result');
+  assert.ok(!spoofIds.includes(reqForB.body.id), 'user_id/assigned_to params must have no effect - B\'s request stays excluded');
+});
+
+// AC3: EMPLOYEE and ADMIN sending assigned_to_me=true doesn't break their
+// existing scoping. EMPLOYEE still only sees own (created_by) requests
+// (trivially empty for assigned_to_me, since employees are never assignees).
+// ADMIN's unrestricted view still works with the added, always-empty-in-
+// practice assigned_to condition (ADMIN never has assigned_to = their id).
+test('GET /api/requests?assigned_to_me=true - EMPLOYEE and ADMIN scoping is unaffected', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const assignRes = await request(app)
+    .post(`/api/requests/${created.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignRes.status, 200);
+
+  // EMPLOYEE: assigned_to_me=true still scoped by created_by = self, so the
+  // now-ASSIGNED request they created (but did not claim, being an employee)
+  // is excluded - the result is empty.
+  const employeeRes = await request(app)
+    .get('/api/requests?assigned_to_me=true')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(employeeRes.status, 200, JSON.stringify(employeeRes.body));
+  assert.deepEqual(employeeRes.body, []);
+
+  // Sanity: without assigned_to_me, the employee still sees their own request
+  // normally (existing created_by scoping unaffected by this feature).
+  const employeeUnfiltered = await request(app)
+    .get('/api/requests')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send();
+  assert.equal(employeeUnfiltered.status, 200);
+  assert.ok(employeeUnfiltered.body.some((r) => r.id === created.body.id));
+
+  // ADMIN: assigned_to_me=true is meaningless for ADMIN (never the assignee
+  // of anything), so the ADMIN sees no requests through it, but the ADMIN's
+  // unfiltered, unrestricted view still returns the request normally.
+  // Insert a throwaway ADMIN directly via SQL (no API path can create one),
+  // reusing the seeded IT authority's password_hash so the plaintext
+  // password 'sifre1234' still works for login (see requests.read.test.js
+  // for the identical convention).
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const adminEmail = `admin-${randomUUID()}@opspulse.com`;
+  const adminInsert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role) VALUES ($1, $2, $3, $4, 'ADMIN') RETURNING id`,
+    ['Test', 'Admin', adminEmail, pwRow.rows[0].password_hash]
+  );
+  t.after(async () => {
+    await pool.query('DELETE FROM users WHERE id = $1', [adminInsert.rows[0].id]);
+  });
+
+  const adminLogin = await request(app).post('/api/auth/login').send({ email: adminEmail, password: 'sifre1234' });
+  assert.equal(adminLogin.status, 200, `admin login failed: ${JSON.stringify(adminLogin.body)}`);
+  const adminToken = adminLogin.body.token;
+
+  const adminAssignedToMeRes = await request(app)
+    .get('/api/requests?assigned_to_me=true')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+  assert.equal(adminAssignedToMeRes.status, 200, JSON.stringify(adminAssignedToMeRes.body));
+  assert.ok(!adminAssignedToMeRes.body.some((r) => r.id === created.body.id));
+
+  const adminUnfilteredRes = await request(app)
+    .get('/api/requests')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+  assert.equal(adminUnfilteredRes.status, 200);
+  assert.ok(adminUnfilteredRes.body.some((r) => r.id === created.body.id));
+});
+
+// AC4: assigned_to_me=true's hardcoded status restriction always wins over a
+// separately-sent status param - sending assigned_to_me=true&status=COMPLETED
+// must NOT return a COMPLETED request, only ASSIGNED/IN_PROGRESS ones.
+test('GET /api/requests?assigned_to_me=true&status=COMPLETED - assigned_to_me status restriction overrides the status param', async (t) => {
+  const employee = await registerEmployee();
+
+  const assignedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const completedReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(assignedReq.status, 201);
+  assert.equal(completedReq.status, 201);
+  registerCleanup(t, employee, [assignedReq.body.id, completedReq.body.id]);
+
+  const assignA = await request(app)
+    .post(`/api/requests/${assignedReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignA.status, 200);
+
+  await request(app)
+    .post(`/api/requests/${completedReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'IN_PROGRESS' });
+  const toCompleted = await request(app)
+    .patch(`/api/requests/${completedReq.body.id}/status`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ status: 'COMPLETED' });
+  assert.equal(toCompleted.status, 200);
+
+  const res = await request(app)
+    .get('/api/requests?assigned_to_me=true&status=COMPLETED')
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const ids = res.body.map((r) => r.id);
+  assert.ok(!ids.includes(completedReq.body.id), 'COMPLETED request must NOT be returned - assigned_to_me wins over status');
+  assert.ok(ids.includes(assignedReq.body.id), 'the ASSIGNED request should still be returned');
+});
+
+// AC5: assigned_to_me=true combined with request_type_id and/or priority ANDs
+// all conditions together.
+test('GET /api/requests?assigned_to_me=true - combines with request_type_id and priority via AND', async (t) => {
+  const employee = await registerEmployee();
+
+  const matchingReq = await createRequestAs(employee.token, passwordResetTypeId, 'HIGH');
+  const wrongPriorityReq = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(matchingReq.status, 201);
+  assert.equal(wrongPriorityReq.status, 201);
+  registerCleanup(t, employee, [matchingReq.body.id, wrongPriorityReq.body.id]);
+
+  const assignMatching = await request(app)
+    .post(`/api/requests/${matchingReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignMatching.status, 200);
+
+  const assignWrongPriority = await request(app)
+    .post(`/api/requests/${wrongPriorityReq.body.id}/assign`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(assignWrongPriority.status, 200);
+
+  // request_type_id combined - both requests share passwordResetTypeId, so
+  // both should be returned.
+  const byTypeRes = await request(app)
+    .get(`/api/requests?assigned_to_me=true&request_type_id=${passwordResetTypeId}`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(byTypeRes.status, 200, JSON.stringify(byTypeRes.body));
+  const byTypeIds = byTypeRes.body.map((r) => r.id);
+  assert.ok(byTypeIds.includes(matchingReq.body.id));
+  assert.ok(byTypeIds.includes(wrongPriorityReq.body.id));
+
+  // priority=HIGH combined - only matchingReq (HIGH) should be returned, not
+  // wrongPriorityReq (LOW).
+  const byPriorityRes = await request(app)
+    .get('/api/requests?assigned_to_me=true&priority=HIGH')
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(byPriorityRes.status, 200, JSON.stringify(byPriorityRes.body));
+  const byPriorityIds = byPriorityRes.body.map((r) => r.id);
+  assert.ok(byPriorityIds.includes(matchingReq.body.id), 'HIGH priority request should be included');
+  assert.ok(!byPriorityIds.includes(wrongPriorityReq.body.id), 'LOW priority request should be excluded by the AND');
+
+  // Combined request_type_id + priority together.
+  const combinedRes = await request(app)
+    .get(`/api/requests?assigned_to_me=true&request_type_id=${passwordResetTypeId}&priority=HIGH`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(combinedRes.status, 200, JSON.stringify(combinedRes.body));
+  const combinedIds = combinedRes.body.map((r) => r.id);
+  assert.ok(combinedIds.includes(matchingReq.body.id));
+  assert.ok(!combinedIds.includes(wrongPriorityReq.body.id));
+
+  // A non-matching request_type_id (HR's Leave Request type) excludes both,
+  // since both requests are of the IT Password Reset type.
+  const nonMatchingTypeRes = await request(app)
+    .get(`/api/requests?assigned_to_me=true&request_type_id=${leaveRequestTypeId}`)
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send();
+  assert.equal(nonMatchingTypeRes.status, 200, JSON.stringify(nonMatchingTypeRes.body));
+  const nonMatchingTypeIds = nonMatchingTypeRes.body.map((r) => r.id);
+  assert.ok(!nonMatchingTypeIds.includes(matchingReq.body.id));
+  assert.ok(!nonMatchingTypeIds.includes(wrongPriorityReq.body.id));
 });

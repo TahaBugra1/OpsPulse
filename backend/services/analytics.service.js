@@ -81,6 +81,65 @@ async function getSla(user) {
   return { compliance_rate: complianceRate, avg_resolution_hours: avgResolutionHours };
 }
 
+async function getEmployeeSummary(user) {
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'OPEN')::int AS total_open,
+         COUNT(*) FILTER (WHERE status = 'ASSIGNED')::int AS total_assigned,
+         COUNT(*) FILTER (WHERE status = 'IN_PROGRESS')::int AS total_in_progress,
+         COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS total_completed,
+         COUNT(*) FILTER (WHERE status = 'REJECTED')::int AS total_rejected,
+         COUNT(*) FILTER (WHERE sla_due_at < now() AND status NOT IN ('COMPLETED', 'REJECTED'))::int AS total_overdue
+       FROM requests
+       WHERE created_by = $1`,
+      [user.id]
+    );
+  } catch (dbErr) {
+    fail(500, 'Özet getirilemedi, lütfen tekrar deneyin');
+  }
+
+  return result.rows[0];
+}
+
+async function getEmployeeSla(user) {
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT
+         COUNT(*)::int AS total_completed,
+         COUNT(*) FILTER (WHERE h.created_at <= r.sla_due_at)::int AS on_time_completed,
+         AVG(EXTRACT(EPOCH FROM (h.created_at - r.created_at)) / 3600) AS avg_resolution_hours
+       FROM requests r
+       JOIN LATERAL (
+         SELECT created_at
+         FROM request_history
+         WHERE request_id = r.id AND action = 'STATUS_CHANGED' AND new_value = 'COMPLETED'
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) h ON true
+       WHERE r.status = 'COMPLETED'
+       AND r.created_by = $1`,
+      [user.id]
+    );
+  } catch (dbErr) {
+    fail(500, 'SLA verileri getirilemedi, lütfen tekrar deneyin');
+  }
+
+  const row = result.rows[0];
+  const totalCompleted = Number(row.total_completed);
+
+  if (totalCompleted === 0) {
+    return { compliance_rate: 0, avg_resolution_hours: null };
+  }
+
+  const complianceRate = Math.round(((Number(row.on_time_completed) / totalCompleted) * 100 + Number.EPSILON) * 100) / 100;
+  const avgResolutionHours = Math.round((Number(row.avg_resolution_hours) + Number.EPSILON) * 100) / 100;
+
+  return { compliance_rate: complianceRate, avg_resolution_hours: avgResolutionHours };
+}
+
 async function getWorkload(user) {
   const departmentId = scopeToDepartment(user);
 
@@ -322,6 +381,8 @@ async function getBottlenecks(user) {
 module.exports = {
   getSummary,
   getSla,
+  getEmployeeSummary,
+  getEmployeeSla,
   getWorkload,
   getDistribution,
   getBottlenecks,

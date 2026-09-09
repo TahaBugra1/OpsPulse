@@ -34,3 +34,13 @@ export const commentSchema = z.object({
 })
 
 export type CommentFormValues = z.infer<typeof commentSchema>
+
+export const createDepartmentAuthoritySchema = z.object({
+  name: z.string().trim().min(1, 'Ad zorunlu').max(150, 'Ad en fazla 150 karakter olabilir'),
+  surname: z.string().trim().max(150, 'Soyad en fazla 150 karakter olabilir'),
+  email: z.string().email('Geçerli bir email adresi girin'),
+  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  department_id: z.string().min(1, 'Departman seçilmeli'),
+})
+
+export type CreateDepartmentAuthorityFormValues = z.infer<typeof createDepartmentAuthoritySchema>

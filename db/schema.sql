@@ -141,8 +141,17 @@ CREATE TABLE request_comments (
   request_id  UUID NOT NULL REFERENCES requests(id) ON DELETE RESTRICT,
   author_id   UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   content     TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Tombstone flag for author-only comment deletion: content is replaced
+  -- with a fixed sentinel string rather than a real DELETE, preserving
+  -- audit/history integrity the same way the rest of this schema does.
+  is_deleted  BOOLEAN NOT NULL DEFAULT false
 );
+
+CREATE TRIGGER trg_request_comments_updated_at
+  BEFORE UPDATE ON request_comments
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE INDEX idx_request_comments_request_id ON request_comments(request_id);
 

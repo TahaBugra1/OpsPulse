@@ -29,7 +29,7 @@ export class ApiError extends Error {
 }
 
 async function apiRequest<T>(
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -71,3 +71,4 @@ async function apiRequest<T>(
 export const apiGet = <T>(path: string) => apiRequest<T>('GET', path)
 export const apiPost = <T>(path: string, body?: unknown) => apiRequest<T>('POST', path, body)
 export const apiPatch = <T>(path: string, body?: unknown) => apiRequest<T>('PATCH', path, body)
+export const apiDelete = <T>(path: string) => apiRequest<T>('DELETE', path)
