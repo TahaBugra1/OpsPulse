@@ -1,8 +1,10 @@
+import { useEffect, useState } from 'react'
 import { PackageOpen } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   Table,
   TableBody,
@@ -19,6 +21,7 @@ import {
   type SlaTone,
   STATUS_LABELS,
   useRequests,
+  useRequestTypes,
 } from '@/lib/requests'
 
 const SLA_TONE_CLASSES: Record<SlaTone, string> = {
@@ -27,10 +30,88 @@ const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   overdue: 'text-destructive',
 }
 
+// Matches Input's exact Tailwind class list (see src/components/ui/input.tsx)
+// per the project's shadcn/native-select-fallback convention (established in
+// NewRequest.tsx — no shadcn Select component exists yet).
+const SELECT_CLASSES =
+  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
+
 export default function Requests() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { data, isPending, isError, error, refetch } = useRequests()
+  const { data: requestTypes } = useRequestTypes()
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const status = searchParams.get('status') ?? ''
+  const requestTypeId = searchParams.get('request_type_id') ?? ''
+  const priority = searchParams.get('priority') ?? ''
+  const urlQ = searchParams.get('q') ?? ''
+
+  const [qInput, setQInput] = useState(urlQ)
+  const [debouncedQ, setDebouncedQ] = useState(urlQ)
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedQ(qInput)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (qInput) next.set('q', qInput)
+          else next.delete('q')
+          return next
+        },
+        { replace: true },
+      )
+    }, 300)
+
+    return () => clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput])
+
+  const visibleRequestTypes =
+    user?.role === 'DEPARTMENT_AUTHORITY'
+      ? requestTypes?.filter((requestType) => requestType.department_id === user.department_id)
+      : requestTypes
+
+  const filters = { q: debouncedQ, status, request_type_id: requestTypeId, priority }
+  const { data, isPending, isError, error, refetch } = useRequests(filters)
+  const hasActiveFilters = !!(debouncedQ || status || requestTypeId || priority)
+
+  function handleStatusChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('status', value)
+      else next.delete('status')
+      return next
+    })
+  }
+
+  function handleRequestTypeChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('request_type_id', value)
+      else next.delete('request_type_id')
+      return next
+    })
+  }
+
+  function handlePriorityChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('priority', value)
+      else next.delete('priority')
+      return next
+    })
+  }
+
+  function handleClearFilters() {
+    setQInput('')
+    setDebouncedQ('')
+    setSearchParams({})
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -43,7 +124,81 @@ export default function Requests() {
         )}
       </div>
       <Card className="w-full">
-        <CardContent>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="flex flex-1 flex-col gap-1.5">
+              <label htmlFor="requests-search" className="text-sm font-medium">
+                Ara
+              </label>
+              <Input
+                id="requests-search"
+                type="text"
+                placeholder="Başlık veya açıklamada ara"
+                value={qInput}
+                onChange={(event) => setQInput(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-1 flex-col gap-1.5">
+              <label htmlFor="requests-status" className="text-sm font-medium">
+                Durum
+              </label>
+              <select
+                id="requests-status"
+                className={SELECT_CLASSES}
+                value={status}
+                onChange={handleStatusChange}
+              >
+                <option value="">Tümü</option>
+                {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-1 flex-col gap-1.5">
+              <label htmlFor="requests-request-type" className="text-sm font-medium">
+                Talep Tipi
+              </label>
+              <select
+                id="requests-request-type"
+                className={SELECT_CLASSES}
+                value={requestTypeId}
+                onChange={handleRequestTypeChange}
+              >
+                <option value="">Tümü</option>
+                {visibleRequestTypes?.map((requestType) => (
+                  <option key={requestType.id} value={requestType.id}>
+                    {requestType.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-1 flex-col gap-1.5">
+              <label htmlFor="requests-priority" className="text-sm font-medium">
+                Öncelik
+              </label>
+              <select
+                id="requests-priority"
+                className={SELECT_CLASSES}
+                value={priority}
+                onChange={handlePriorityChange}
+              >
+                <option value="">Tümü</option>
+                {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {hasActiveFilters && (
+              <Button type="button" variant="outline" onClick={handleClearFilters}>
+                Filtreleri Temizle
+              </Button>
+            )}
+          </div>
+
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
 
           {isError && (
@@ -57,7 +212,17 @@ export default function Requests() {
             </div>
           )}
 
-          {!isPending && !isError && data && data.length === 0 && (
+          {!isPending && !isError && data && data.length === 0 && hasActiveFilters && (
+            <div className="flex flex-col items-center gap-3 py-8 text-muted-foreground">
+              <PackageOpen className="size-10" />
+              <p>Bu filtrelere uyan talep yok</p>
+              <Button type="button" variant="outline" onClick={handleClearFilters}>
+                Filtreleri Temizle
+              </Button>
+            </div>
+          )}
+
+          {!isPending && !isError && data && data.length === 0 && !hasActiveFilters && (
             <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
               <PackageOpen className="size-10" />
               <p>Henüz talep yok</p>

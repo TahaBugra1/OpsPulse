@@ -65,6 +65,52 @@ describe('requests lib', () => {
     expect(options?.method).toBe('GET')
   })
 
+  // AC7 (requests-search-filter task): useRequests() with no args still hits
+  // plain /api/requests, with no query string at all — the hook-level
+  // counterpart to Requests.tsx never adding empty filter params.
+  it('useRequests with no args calls GET /api/requests with no query string', async () => {
+    const list = [{ id: 'r1', request_number: 1 }]
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, list))
+
+    const { result } = renderHook(() => useRequests(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toMatch(/\/api\/requests$/)
+    expect(String(url)).not.toContain('?')
+  })
+
+  // requests-search-filter task: a `q` filter produces a `?q=` query param.
+  it('useRequests({ q }) produces a ?q= query string', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const { result } = renderHook(() => useRequests({ q: 'yazıcı' }), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('q=')
+  })
+
+  // requests-search-filter task: status + request_type_id + priority combine
+  // into one ANDed query string, all three params present together.
+  it('useRequests combines status, request_type_id and priority into one query string', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const { result } = renderHook(
+      () => useRequests({ status: 'OPEN', request_type_id: 'type-1', priority: 'HIGH' }),
+      { wrapper: wrapper() },
+    )
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('status=OPEN')
+    expect(String(url)).toContain('request_type_id=type-1')
+    expect(String(url)).toContain('priority=HIGH')
+  })
+
   // AC4: useRequest(id) calls GET /api/requests/:id with the right id in the URL
   it('useRequest calls GET /api/requests/:id with the given id', async () => {
     const item = { id: 'r1', request_number: 1 }

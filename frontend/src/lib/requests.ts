@@ -121,10 +121,27 @@ export function getSlaDisplay(request: RequestListItem): SlaDisplay | null {
   return { label: `${amount} kaldı`, tone }
 }
 
-export function useRequests() {
+export interface RequestFilters {
+  q?: string
+  status?: string
+  request_type_id?: string
+  priority?: string
+}
+
+export function useRequests(filters: RequestFilters = {}) {
+  const { q, status, request_type_id, priority } = filters
+
   return useQuery({
-    queryKey: ['requests'],
-    queryFn: () => apiGet<RequestListItem[]>('/api/requests'),
+    queryKey: ['requests', q ?? '', status ?? '', request_type_id ?? '', priority ?? ''],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (q) params.set('q', q)
+      if (status) params.set('status', status)
+      if (request_type_id) params.set('request_type_id', request_type_id)
+      if (priority) params.set('priority', priority)
+      const query = params.toString()
+      return apiGet<RequestListItem[]>(`/api/requests${query ? `?${query}` : ''}`)
+    },
   })
 }
 
