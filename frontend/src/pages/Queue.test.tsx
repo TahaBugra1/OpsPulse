@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -942,6 +942,210 @@ describe('Queue page', () => {
       expect(within(row).getByText('3 saat kaldı')).toHaveClass('text-muted-foreground')
       expect(within(row).getByRole('checkbox', { name: '#11 seç' })).toBeInTheDocument()
       expect(within(row).getByRole('button', { name: 'Üstlen' })).toBeInTheDocument()
+    })
+  })
+
+  // ---------------------------------------------------------------------
+  // Date range + saved filters — queue-date-range-saved-filters task
+  // ---------------------------------------------------------------------
+
+  describe('Date range and saved filters', () => {
+    // The 300ms search-debounce effect uses a real setTimeout that keeps
+    // ticking regardless of intervening state updates; with real timers it
+    // can fire mid-test (after enough real wall-clock time has elapsed from
+    // user interactions) and re-derive the URL from a stale snapshot,
+    // clobbering a filter set moments earlier. Fake timers (advanced only via
+    // userEvent's own internal ticks) keep every test's timing deterministic,
+    // matching the existing "debounces the search input" test's approach.
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // AC5 (empty result with a date filter applied): reuses the existing
+    // filtered-empty state, triggered by a date input instead of a select.
+    it('shows the filtered-empty state when a date-range filter matches nothing', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+      const dateFromInput = screen.getByLabelText('Başlangıç Tarihi')
+      fireEvent.change(dateFromInput, { target: { value: '2026-01-15' } })
+
+      await waitFor(() => expect(screen.getByText('Bu filtrelere uyan talep yok')).toBeInTheDocument())
+      expect(screen.queryByRole('table')).not.toBeInTheDocument()
+      const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+      expect(String(lastCall?.[0])).toContain('date_from=2026-01-15')
+    })
+
+    // AC4b [High]: an invalid date range (date_from > date_to) shows the inline
+    // error, and the fetch actually sent to the backend carries NEITHER
+    // date_from nor date_to — the invalid range is forced to empty, never sent.
+    it('shows an inline error and strips date params from the fetch when date_from is after date_to', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, [makeRequest()]))
+
+      const dateFromInput = screen.getByLabelText('Başlangıç Tarihi')
+      const dateToInput = screen.getByLabelText('Bitiş Tarihi')
+      fireEvent.change(dateFromInput, { target: { value: '2026-02-10' } })
+      fireEvent.change(dateToInput, { target: { value: '2026-02-01' } })
+
+      expect(
+        await screen.findByText('Başlangıç tarihi bitiş tarihinden sonra olamaz'),
+      ).toBeInTheDocument()
+
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        expect(String(lastCall?.[0])).not.toContain('date_from=')
+        expect(String(lastCall?.[0])).not.toContain('date_to=')
+      })
+    })
+
+    // AC2 [Critical]: saving the current filters under a name writes them to
+    // localStorage and the name appears as an option in the saved-filters select.
+    it('saves the current filters under a name to localStorage and lists it in the select', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, [makeRequest()]))
+
+      const prioritySelect = screen.getByLabelText('Öncelik')
+      await user.selectOptions(prioritySelect, 'HIGH')
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        expect(String(lastCall?.[0])).toContain('priority=HIGH')
+      })
+
+      const saveNameInput = screen.getByLabelText('Yeni Filtre Adı')
+      await user.type(saveNameInput, 'Acil Talepler')
+      await user.click(screen.getByRole('button', { name: 'Bu Filtreyi Kaydet' }))
+
+      const savedFilterSelect = screen.getByLabelText('Kayıtlı Filtreler')
+      expect(
+        within(savedFilterSelect).getByRole('option', { name: 'Acil Talepler' }),
+      ).toBeInTheDocument()
+      // The select is a one-shot "apply" control, never a persistent selection.
+      expect(savedFilterSelect).toHaveValue('')
+      // The save-name input clears after saving.
+      expect(saveNameInput).toHaveValue('')
+
+      const stored = JSON.parse(localStorage.getItem('opspulse_queue_saved_filters') ?? '[]')
+      expect(stored).toEqual([
+        expect.objectContaining({ name: 'Acil Talepler', priority: 'HIGH' }),
+      ])
+    })
+
+    // AC6 [High]: saving again under an EXACT same name overwrites the existing
+    // entry rather than appending a duplicate — the select ends up with exactly
+    // one option for that name.
+    it('overwrites the existing saved filter when saved again under the same name', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, [makeRequest()]))
+
+      const saveNameInput = screen.getByLabelText('Yeni Filtre Adı')
+      const saveButton = screen.getByRole('button', { name: 'Bu Filtreyi Kaydet' })
+
+      // First save: priority HIGH.
+      const prioritySelect = screen.getByLabelText('Öncelik')
+      await user.selectOptions(prioritySelect, 'HIGH')
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        expect(String(lastCall?.[0])).toContain('priority=HIGH')
+      })
+      await user.type(saveNameInput, 'Benim Filtrem')
+      await user.click(saveButton)
+
+      // Second save under the same name: priority LOW should replace it.
+      await user.selectOptions(prioritySelect, 'LOW')
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        expect(String(lastCall?.[0])).toContain('priority=LOW')
+      })
+      await user.type(saveNameInput, 'Benim Filtrem')
+      await user.click(saveButton)
+
+      const savedFilterSelect = screen.getByLabelText('Kayıtlı Filtreler')
+      expect(
+        within(savedFilterSelect).getAllByRole('option', { name: 'Benim Filtrem' }),
+      ).toHaveLength(1)
+
+      const stored = JSON.parse(localStorage.getItem('opspulse_queue_saved_filters') ?? '[]')
+      expect(stored).toEqual([
+        expect.objectContaining({ name: 'Benim Filtrem', priority: 'LOW' }),
+      ])
+    })
+
+    // AC3 [Critical]: choosing a saved filter from the select restores every
+    // field (q, priority, request_type_id, date_from, date_to) into the URL
+    // (reflected here through the resulting fetch and the now-updated controls),
+    // and the search box's own local/debounced state is synced too.
+    it('applies a saved filter, restoring all fields into the URL and controls', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilter = {
+        name: 'Tam Filtre',
+        q: 'yazıcı',
+        request_type_id: 'type-9',
+        priority: 'HIGH',
+        date_from: '2026-01-01',
+        date_to: '2026-01-31',
+      }
+      localStorage.setItem('opspulse_queue_saved_filters', JSON.stringify([savedFilter]))
+
+      mockRequestTypesFetch([{ id: 'type-9', name: 'Donanım Arızası', department_id: 'dept-1' }])
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, []))
+
+      const savedFilterSelect = screen.getByLabelText('Kayıtlı Filtreler')
+      await user.selectOptions(savedFilterSelect, 'Tam Filtre')
+
+      await waitFor(() => {
+        const lastCall = vi.mocked(fetch).mock.calls.at(-1)
+        const url = String(lastCall?.[0])
+        expect(url).toContain('q=yaz')
+        expect(url).toContain('request_type_id=type-9')
+        expect(url).toContain('priority=HIGH')
+        expect(url).toContain('date_from=2026-01-01')
+        expect(url).toContain('date_to=2026-01-31')
+      })
+
+      expect(screen.getByLabelText('Ara')).toHaveValue('yazıcı')
+      expect(screen.getByLabelText('Öncelik')).toHaveValue('HIGH')
+      expect(screen.getByLabelText('Talep Tipi')).toHaveValue('type-9')
+      expect(screen.getByLabelText('Başlangıç Tarihi')).toHaveValue('2026-01-01')
+      expect(screen.getByLabelText('Bitiş Tarihi')).toHaveValue('2026-01-31')
+      // The select stays a one-shot control: it does not retain the applied name.
+      expect(savedFilterSelect).toHaveValue('')
     })
   })
 })

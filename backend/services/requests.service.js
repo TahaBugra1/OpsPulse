@@ -378,6 +378,7 @@ const HISTORY_SELECT = `
 
 const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTED'];
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 async function listRequests(query, user) {
   const status = query && query.status;
@@ -389,12 +390,23 @@ async function listRequests(query, user) {
   const requestTypeId = query && query.request_type_id;
   const priority = query && query.priority;
   const assignedToMe = query && query.assigned_to_me === 'true';
+  const dateFrom = query && query.date_from;
+  const dateTo = query && query.date_to;
 
   if (requestTypeId && !UUID_REGEX.test(requestTypeId)) {
     fail(400, 'Geçersiz talep türü');
   }
   if (priority && !SLA_HOURS[priority]) {
     fail(400, 'Geçersiz öncelik');
+  }
+  if (dateFrom && !DATE_REGEX.test(dateFrom)) {
+    fail(400, 'Geçersiz tarih değeri');
+  }
+  if (dateTo && !DATE_REGEX.test(dateTo)) {
+    fail(400, 'Geçersiz tarih değeri');
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    fail(400, 'Geçersiz tarih aralığı');
   }
 
   const conditions = [];
@@ -433,6 +445,16 @@ async function listRequests(query, user) {
   if (priority) {
     params.push(priority);
     conditions.push(`r.priority = $${params.length}`);
+  }
+
+  if (dateFrom) {
+    params.push(dateFrom);
+    conditions.push(`r.created_at::date >= $${params.length}::date`);
+  }
+
+  if (dateTo) {
+    params.push(dateTo);
+    conditions.push(`r.created_at::date <= $${params.length}::date`);
   }
 
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

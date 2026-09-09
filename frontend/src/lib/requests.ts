@@ -233,18 +233,22 @@ export interface QueueFilters {
   q?: string
   request_type_id?: string
   priority?: string
+  date_from?: string
+  date_to?: string
 }
 
 export function useOpenQueue(filters: QueueFilters = {}) {
-  const { q, request_type_id, priority } = filters
+  const { q, request_type_id, priority, date_from, date_to } = filters
 
   return useQuery({
-    queryKey: ['requests', 'queue', q ?? '', request_type_id ?? '', priority ?? ''],
+    queryKey: ['requests', 'queue', q ?? '', request_type_id ?? '', priority ?? '', date_from ?? '', date_to ?? ''],
     queryFn: () => {
       const params = new URLSearchParams({ status: 'OPEN' })
       if (q) params.set('q', q)
       if (request_type_id) params.set('request_type_id', request_type_id)
       if (priority) params.set('priority', priority)
+      if (date_from) params.set('date_from', date_from)
+      if (date_to) params.set('date_to', date_to)
       return apiGet<RequestListItem[]>(`/api/requests?${params.toString()}`)
     },
     select: (data) => [...data].reverse(),
