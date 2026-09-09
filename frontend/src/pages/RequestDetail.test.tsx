@@ -1155,6 +1155,21 @@ describe('RequestDetail page', () => {
       expect(deleteButtons.length).toBe(1)
     })
 
+    it('shows Sil but not Düzenle for an ADMIN viewing a comment they did not author', async () => {
+      const admin: AuthUser = { ...fakeUser, role: 'ADMIN', department_id: null }
+      const other = makeComment({ id: 'c1', author_id: 'user-2', content: 'Başkasının yorumu' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [other]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Başkasının yorumu')).toBeInTheDocument())
+      expect(screen.getByRole('button', { name: 'Sil' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Düzenle' })).not.toBeInTheDocument()
+    })
+
     it('renders a tombstoned comment with no buttons even when authored by the current user (is_deleted wins over author check)', async () => {
       const tombstoned = makeComment({
         id: 'c1',

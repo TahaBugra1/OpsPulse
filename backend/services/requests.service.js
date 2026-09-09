@@ -627,7 +627,7 @@ async function deleteComment(requestId, commentId, user) {
   if (!comment) {
     fail(404, 'Yorum bulunamadı');
   }
-  if (comment.author_id !== user.id) {
+  if (comment.author_id !== user.id && user.role !== 'ADMIN') {
     fail(403, 'Bu işlem için yetkiniz yok');
   }
   if (comment.is_deleted) {

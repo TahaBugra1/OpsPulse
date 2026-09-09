@@ -412,6 +412,7 @@ export default function RequestDetail() {
                         requestId={requestId}
                         comment={comment}
                         currentUserId={user?.id}
+                        isAdmin={user?.role === 'ADMIN'}
                         isEditing={editingCommentId === comment.id}
                         editForm={editCommentForm}
                         onStartEdit={() => startEditingComment(comment)}
@@ -584,6 +585,7 @@ function CommentItem({
   requestId,
   comment,
   currentUserId,
+  isAdmin,
   isEditing,
   editForm,
   onStartEdit,
@@ -595,6 +597,7 @@ function CommentItem({
   requestId: string
   comment: RequestComment
   currentUserId: string | undefined
+  isAdmin: boolean
   isEditing: boolean
   editForm: UseFormReturn<CommentFormValues>
   onStartEdit: () => void
@@ -674,11 +677,13 @@ function CommentItem({
       ) : (
         <>
           <p className="whitespace-pre-wrap">{comment.content}</p>
-          {isAuthor && (
+          {(isAuthor || isAdmin) && (
             <div className="mt-2 flex items-center gap-2">
-              <Button type="button" size="sm" variant="ghost" onClick={onStartEdit}>
-                Düzenle
-              </Button>
+              {isAuthor && (
+                <Button type="button" size="sm" variant="ghost" onClick={onStartEdit}>
+                  Düzenle
+                </Button>
+              )}
               <Button type="button" size="sm" variant="ghost" onClick={handleDelete} disabled={deleteMutation.isPending}>
                 Sil
               </Button>
