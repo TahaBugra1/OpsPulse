@@ -182,6 +182,18 @@ test('POST /api/auth/login - 6th sequential login attempt for the same email ret
   assert.equal(lastRes.status, 429);
 });
 
+// login with a malformed email -> 400, same guard as register, never reaches the DB
+test('POST /api/auth/login - malformed email returns 400 with a message', async () => {
+  const res = await request(app).post('/api/auth/login').send({
+    email: 'not-an-email',
+    password: 'whatever-not-a-real-password',
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(typeof res.body.message, 'string');
+  assert.ok(res.body.message.length > 0);
+});
+
 // AC8: register with a password under 8 characters -> 400
 test('POST /api/auth/register - password shorter than 8 characters returns 400 with a message', async () => {
   const email = validEmail();

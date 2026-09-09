@@ -91,6 +91,9 @@ async function register({ name, surname, email, password }) {
 }
 
 async function login({ email, password, rememberMe }) {
+  if (!EMAIL_RE.test(email || '')) {
+    fail(400, 'Geçersiz email formatı');
+  }
   let result;
   try {
     result = await pool.query(
