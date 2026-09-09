@@ -886,4 +886,62 @@ describe('Queue page', () => {
     )
     expect(await screen.findByText('Kuyrukta talep yok')).toBeInTheDocument()
   })
+
+  // ---------------------------------------------------------------------
+  // SLA column — sla-visibility task
+  // ---------------------------------------------------------------------
+
+  // The boundary/tone logic lives in getSlaDisplay's unit tests; this block
+  // only proves the column is wired into the queue table. getSlaDisplay()
+  // reads Date.now(), so the row is built as an offset from a frozen NOW
+  // rather than makeRequest()'s literal default deadline, whose label would
+  // change every day real time advances. The clock is faked (and restored)
+  // inside this describe only, so every test above keeps its own timer setup;
+  // shouldAdvanceTime keeps waitFor working on the faked clock.
+  describe('SLA column', () => {
+    const NOW = new Date('2026-09-10T12:00:00.000Z')
+    const MINUTE = 60_000
+    const HOUR = 60 * MINUTE
+
+    function fromNow(offsetMs: number) {
+      return new Date(NOW.getTime() + offsetMs).toISOString()
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // AC6/AC1/AC9: the queue gets the same SLA column, and it displaces
+    // neither the selection checkbox nor the Aksiyon column.
+    it('renders an SLA column header and the remaining time for a queued row', async () => {
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse(200, [
+          makeRequest({
+            id: 'sla-1',
+            request_number: 11,
+            title: 'Kuyruk Talebi',
+            created_at: fromNow(-30 * MINUTE),
+            sla_due_at: fromNow(3 * HOUR + 30 * MINUTE),
+          }),
+        ]),
+      )
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      expect(screen.getByRole('columnheader', { name: 'SLA' })).toBeInTheDocument()
+
+      const row = screen.getByText('Kuyruk Talebi').closest('tr') as HTMLElement
+      expect(within(row).getByText('3 saat kaldı')).toHaveClass('text-muted-foreground')
+      expect(within(row).getByRole('checkbox', { name: '#11 seç' })).toBeInTheDocument()
+      expect(within(row).getByRole('button', { name: 'Üstlen' })).toBeInTheDocument()
+    })
+  })
 })

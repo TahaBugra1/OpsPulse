@@ -249,4 +249,106 @@ describe('Requests page', () => {
     await waitFor(() => expect(screen.getByText('Henüz talep yok')).toBeInTheDocument())
     expect(screen.queryByRole('button', { name: 'Yeni Talep' })).not.toBeInTheDocument()
   })
+
+  // ---------------------------------------------------------------------
+  // SLA column — sla-visibility task
+  // ---------------------------------------------------------------------
+
+  // getSlaDisplay() reads Date.now(), so these rows are built as offsets from
+  // a frozen NOW instead of makeRequest()'s literal default deadline, whose
+  // label would otherwise change every day real time advances. The clock is
+  // faked (and restored) inside this describe only, so every test above keeps
+  // running on real timers; shouldAdvanceTime keeps waitFor working on the
+  // faked clock, so each offset is kept well clear of a unit boundary.
+  describe('SLA column', () => {
+    const NOW = new Date('2026-09-10T12:00:00.000Z')
+    const MINUTE = 60_000
+    const HOUR = 60 * MINUTE
+
+    function fromNow(offsetMs: number) {
+      return new Date(NOW.getTime() + offsetMs).toISOString()
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // AC6/AC9: the SLA column sits right after Öncelik, and no pre-existing
+    // column was dropped or displaced to make room for it.
+    it('renders an SLA column header between Öncelik and Departman', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderRequests()
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
+        'No',
+        'Başlık',
+        'Durum',
+        'Öncelik',
+        'SLA',
+        'Departman',
+        'Oluşturulma Tarihi',
+      ])
+    })
+
+    // AC1/AC2/AC3/AC9: one row per outcome — remaining time, overdue time and
+    // the "-" of a terminal status — plus the untouched "Gecikmiş" badge.
+    it('shows remaining time, overdue time and "-" in each row SLA cell', async () => {
+      const requests = [
+        makeRequest({
+          id: 'uuid-active',
+          request_number: 1,
+          title: 'Aktif Talep',
+          status: 'OPEN',
+          is_overdue: false,
+          created_at: fromNow(-30 * MINUTE),
+          sla_due_at: fromNow(3 * HOUR + 30 * MINUTE),
+        }),
+        makeRequest({
+          id: 'uuid-overdue',
+          request_number: 2,
+          title: 'Geciken Talep',
+          status: 'ASSIGNED',
+          is_overdue: true,
+          created_at: fromNow(-10 * HOUR),
+          sla_due_at: fromNow(-6 * HOUR - 30 * MINUTE),
+        }),
+        makeRequest({
+          id: 'uuid-done',
+          request_number: 3,
+          title: 'Biten Talep',
+          status: 'COMPLETED',
+          is_overdue: false,
+          created_at: fromNow(-30 * MINUTE),
+          sla_due_at: fromNow(3 * HOUR + 30 * MINUTE),
+        }),
+      ]
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, requests))
+
+      renderRequests()
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      const activeRow = screen.getByText('Aktif Talep').closest('tr') as HTMLElement
+      const overdueRow = screen.getByText('Geciken Talep').closest('tr') as HTMLElement
+      const doneRow = screen.getByText('Biten Talep').closest('tr') as HTMLElement
+
+      expect(within(activeRow).getByText('3 saat kaldı')).toHaveClass('text-muted-foreground')
+      expect(within(overdueRow).getByText('6 saat gecikti')).toHaveClass('text-destructive')
+      expect(within(doneRow).getByText('-')).toBeInTheDocument()
+      expect(within(doneRow).queryByText(/kaldı|gecikti/)).not.toBeInTheDocument()
+
+      // AC9: the SLA cell is purely additive — the overdue badge still renders
+      // for the overdue row and still stays off the others.
+      expect(within(overdueRow).getByText('Gecikmiş')).toBeInTheDocument()
+      expect(within(activeRow).queryByText('Gecikmiş')).not.toBeInTheDocument()
+    })
+  })
 })

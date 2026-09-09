@@ -30,9 +30,11 @@ import { useAuth } from '@/context/AuthContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
+  getSlaDisplay,
   PRIORITY_LABELS,
   type BulkQueueActionResult,
   type RequestListItem,
+  type SlaTone,
   useBulkQueueAction,
   useClaimRequest,
   useOpenQueue,
@@ -45,6 +47,12 @@ import { rejectNoteSchema, type RejectNoteFormValues } from '@/lib/validation'
 // NewRequest.tsx — no shadcn Select component exists yet).
 const SELECT_CLASSES =
   'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
+
+const SLA_TONE_CLASSES: Record<SlaTone, string> = {
+  normal: 'text-muted-foreground',
+  warning: 'text-warning',
+  overdue: 'text-destructive',
+}
 
 // A bulk run reports successes and failures separately, and tells a 409
 // ("someone else already took it") apart from any other error.
@@ -328,6 +336,7 @@ export default function Queue() {
                   <TableHead>No</TableHead>
                   <TableHead>Başlık</TableHead>
                   <TableHead>Öncelik</TableHead>
+                  <TableHead>SLA</TableHead>
                   <TableHead>Departman</TableHead>
                   <TableHead>Oluşturulma Tarihi</TableHead>
                   {canClaim && <TableHead>Aksiyon</TableHead>}
@@ -416,6 +425,7 @@ function QueueRow({
 }) {
   const queryClient = useQueryClient()
   const claimMutation = useClaimRequest(request.id)
+  const sla = getSlaDisplay(request)
 
   function handleClaim() {
     claimMutation.mutate(undefined, {
@@ -444,6 +454,9 @@ function QueueRow({
       <TableCell>#{request.request_number}</TableCell>
       <TableCell>{request.title}</TableCell>
       <TableCell>{PRIORITY_LABELS[request.priority] ?? request.priority}</TableCell>
+      <TableCell className={sla ? SLA_TONE_CLASSES[sla.tone] : undefined}>
+        {sla?.label ?? '-'}
+      </TableCell>
       <TableCell>{request.department_name}</TableCell>
       <TableCell>{new Date(request.created_at).toLocaleString('tr-TR')}</TableCell>
       {canClaim && (

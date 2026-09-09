@@ -3,7 +3,9 @@ import { renderHook, waitFor, act } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  getSlaDisplay,
   PRIORITY_LABELS,
+  type RequestListItem,
   STATUS_LABELS,
   useAddComment,
   useBulkQueueAction,
@@ -364,5 +366,236 @@ describe('requests lib', () => {
 
     expect(result.current.data).toEqual({ succeeded: 0, conflicted: 0, failed: 0 })
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+// -----------------------------------------------------------------------
+// getSlaDisplay — sla-visibility task
+// -----------------------------------------------------------------------
+
+// getSlaDisplay() reads Date.now(), so every fixture below is built as an
+// offset from a single frozen NOW rather than from a literal date — a literal
+// would silently drift into a different label every day real time advances.
+const NOW = new Date('2026-09-10T12:00:00.000Z')
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+
+function fromNow(offsetMs: number) {
+  return new Date(NOW.getTime() + offsetMs).toISOString()
+}
+
+// Default fixture: an OPEN request with an 8h window (created 4h ago, due in
+// 4h), i.e. comfortably outside the last-quarter warning band.
+function makeRequest(overrides: Partial<RequestListItem> = {}): RequestListItem {
+  return {
+    id: 'uuid-1111-2222',
+    request_number: 42,
+    title: 'Yazıcı bozuldu',
+    description: 'Ofis yazıcısı çalışmıyor',
+    request_type_id: 'type-1',
+    department_id: 'dept-1',
+    created_by: 'user-1',
+    assigned_to: null,
+    priority: 'HIGH',
+    status: 'OPEN',
+    sla_due_at: fromNow(4 * HOUR),
+    created_at: fromNow(-4 * HOUR),
+    updated_at: fromNow(-4 * HOUR),
+    is_overdue: false,
+    request_type_name: 'Donanım Arızası',
+    department_name: 'IT',
+    created_by_name: 'Taha',
+    assigned_to_name: null,
+    ...overrides,
+  }
+}
+
+// Fake timers are installed and torn down inside this describe only: the
+// hook tests above drive TanStack Query through waitFor and need real timers.
+describe('getSlaDisplay', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  // AC1: every non-terminal status gets a remaining-time label.
+  it('returns a remaining-time label for every active status', () => {
+    for (const status of ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] as const) {
+      expect(getSlaDisplay(makeRequest({ status }))).toEqual({
+        label: '4 saat kaldı',
+        tone: 'normal',
+      })
+    }
+  })
+
+  // AC1: the label uses days, hours or minutes — whichever is the single
+  // largest meaningful unit for that amount.
+  it('renders the remaining time in days, hours or minutes', () => {
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(2 * DAY), created_at: fromNow(-4 * DAY) }))
+        ?.label,
+    ).toBe('2 gün kaldı')
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(3 * HOUR), created_at: fromNow(-3 * HOUR) }))
+        ?.label,
+    ).toBe('3 saat kaldı')
+    expect(
+      getSlaDisplay(
+        makeRequest({ sla_due_at: fromNow(45 * MINUTE), created_at: fromNow(-45 * MINUTE) }),
+      )?.label,
+    ).toBe('45 dakika kaldı')
+  })
+
+  // AC1: the unit switches exactly at 1 day / 1 hour / 1 minute, and only ever
+  // one unit is shown — 3h30m is "3 saat", never "3 saat 30 dakika".
+  it('switches units at the exact day/hour/minute boundaries and never combines two units', () => {
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(DAY) }))?.label).toBe('1 gün kaldı')
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(DAY - 1) }))?.label).toBe('23 saat kaldı')
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(HOUR) }))?.label).toBe('1 saat kaldı')
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(HOUR - 1) }))?.label).toBe(
+      '59 dakika kaldı',
+    )
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(MINUTE) }))?.label).toBe(
+      '1 dakika kaldı',
+    )
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(3 * HOUR + 30 * MINUTE) }))?.label).toBe(
+      '3 saat kaldı',
+    )
+  })
+
+  // AC8: under a minute the label is a phrase, never a rounded-down "0 dakika"
+  // and never a negative number at the exact deadline.
+  it('renders "1 dakikadan az kaldı" with under a minute left, including at the deadline itself', () => {
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(59 * 1000) }))?.label).toBe(
+      '1 dakikadan az kaldı',
+    )
+    expect(getSlaDisplay(makeRequest({ sla_due_at: fromNow(0) }))?.label).toBe(
+      '1 dakikadan az kaldı',
+    )
+  })
+
+  // AC4: on a LOW-priority 72h window the warning band starts at 18h left.
+  it('marks the last quarter of a 72h window as warning and the rest as normal', () => {
+    // 20h left of 72h — still normal.
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(20 * HOUR), created_at: fromNow(-52 * HOUR) })),
+    ).toEqual({ label: '20 saat kaldı', tone: 'normal' })
+    // Exactly 18h left of 72h — the boundary itself is already warning.
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(18 * HOUR), created_at: fromNow(-54 * HOUR) })),
+    ).toEqual({ label: '18 saat kaldı', tone: 'warning' })
+    // 17h left of 72h — inside the band.
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(17 * HOUR), created_at: fromNow(-55 * HOUR) })),
+    ).toEqual({ label: '17 saat kaldı', tone: 'warning' })
+  })
+
+  // AC4: on a HIGH-priority 4h window the same quarter rule lands at 1h left.
+  it('marks the last quarter of a 4h window as warning and the rest as normal', () => {
+    expect(
+      getSlaDisplay(
+        makeRequest({ sla_due_at: fromNow(90 * MINUTE), created_at: fromNow(-150 * MINUTE) }),
+      ),
+    ).toEqual({ label: '1 saat kaldı', tone: 'normal' })
+    // Exactly 60m left of 4h — the boundary itself is already warning.
+    expect(
+      getSlaDisplay(makeRequest({ sla_due_at: fromNow(HOUR), created_at: fromNow(-3 * HOUR) })),
+    ).toEqual({ label: '1 saat kaldı', tone: 'warning' })
+    expect(
+      getSlaDisplay(
+        makeRequest({ sla_due_at: fromNow(45 * MINUTE), created_at: fromNow(-195 * MINUTE) }),
+      ),
+    ).toEqual({ label: '45 dakika kaldı', tone: 'warning' })
+  })
+
+  // AC4: the threshold is a share of each request's OWN window, not a fixed
+  // hour count — 17h left is already warning on a 72h window while 90m left is
+  // still normal on a 4h one.
+  it('measures the warning band against each request own window, not a fixed hour count', () => {
+    const longWindow = getSlaDisplay(
+      makeRequest({ sla_due_at: fromNow(17 * HOUR), created_at: fromNow(-55 * HOUR) }),
+    )
+    const shortWindow = getSlaDisplay(
+      makeRequest({ sla_due_at: fromNow(90 * MINUTE), created_at: fromNow(-150 * MINUTE) }),
+    )
+
+    expect(longWindow?.tone).toBe('warning')
+    expect(shortWindow?.tone).toBe('normal')
+  })
+
+  // AC2: an overdue request reports how far past the deadline it is.
+  it('reports how far overdue a request is with the overdue tone', () => {
+    expect(
+      getSlaDisplay(
+        makeRequest({
+          is_overdue: true,
+          sla_due_at: fromNow(-6 * HOUR),
+          created_at: fromNow(-10 * HOUR),
+        }),
+      ),
+    ).toEqual({ label: '6 saat gecikti', tone: 'overdue' })
+  })
+
+  // AC5: the server is the authority on lateness. is_overdue wins even when
+  // the client clock still shows time left (skewed/slow client clock).
+  it('renders as overdue when the server says so even though the deadline is still in the future locally', () => {
+    expect(
+      getSlaDisplay(
+        makeRequest({
+          is_overdue: true,
+          sla_due_at: fromNow(3 * HOUR),
+          created_at: fromNow(-1 * HOUR),
+        }),
+      ),
+    ).toEqual({ label: '3 saat gecikti', tone: 'overdue' })
+  })
+
+  // AC5 (other direction): with is_overdue false the wording is never
+  // "gecikti", even when the client clock is already past the deadline.
+  it('never says "gecikti" when the server says the request is not overdue, even past the local deadline', () => {
+    const sla = getSlaDisplay(
+      makeRequest({
+        is_overdue: false,
+        sla_due_at: fromNow(-5 * HOUR),
+        created_at: fromNow(-9 * HOUR),
+      }),
+    )
+
+    expect(sla?.label).not.toContain('gecikti')
+    expect(sla).toEqual({ label: '5 saat kaldı', tone: 'warning' })
+  })
+
+  // AC3: terminal statuses have no deadline left to meet.
+  it('returns null for COMPLETED and REJECTED requests', () => {
+    expect(getSlaDisplay(makeRequest({ status: 'COMPLETED' }))).toBeNull()
+    expect(getSlaDisplay(makeRequest({ status: 'REJECTED' }))).toBeNull()
+  })
+
+  // AC3: status wins over the clock — a completed request that was finished
+  // late still shows nothing, not an overdue label.
+  it('returns null for a terminal status even when the deadline passed and the server flagged it overdue', () => {
+    expect(
+      getSlaDisplay(
+        makeRequest({ status: 'COMPLETED', is_overdue: true, sla_due_at: fromNow(-6 * HOUR) }),
+      ),
+    ).toBeNull()
+    expect(
+      getSlaDisplay(
+        makeRequest({ status: 'REJECTED', is_overdue: true, sla_due_at: fromNow(-6 * HOUR) }),
+      ),
+    ).toBeNull()
+  })
+
+  // AC7: an empty or unparseable deadline degrades to "no SLA to show"
+  // (rendered as "-") instead of throwing or printing "Invalid Date".
+  it('returns null without throwing for a missing or unparseable sla_due_at', () => {
+    expect(getSlaDisplay(makeRequest({ sla_due_at: '' }))).toBeNull()
+    expect(() => getSlaDisplay(makeRequest({ sla_due_at: 'not-a-date' }))).not.toThrow()
+    expect(getSlaDisplay(makeRequest({ sla_due_at: 'not-a-date' }))).toBeNull()
   })
 })

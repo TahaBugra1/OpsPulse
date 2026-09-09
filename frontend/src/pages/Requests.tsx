@@ -12,7 +12,20 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
-import { PRIORITY_LABELS, REQUESTS_PAGE_TITLE, STATUS_LABELS, useRequests } from '@/lib/requests'
+import {
+  getSlaDisplay,
+  PRIORITY_LABELS,
+  REQUESTS_PAGE_TITLE,
+  type SlaTone,
+  STATUS_LABELS,
+  useRequests,
+} from '@/lib/requests'
+
+const SLA_TONE_CLASSES: Record<SlaTone, string> = {
+  normal: 'text-muted-foreground',
+  warning: 'text-warning',
+  overdue: 'text-destructive',
+}
 
 export default function Requests() {
   const navigate = useNavigate()
@@ -59,41 +72,49 @@ export default function Requests() {
                   <TableHead>Başlık</TableHead>
                   <TableHead>Durum</TableHead>
                   <TableHead>Öncelik</TableHead>
+                  <TableHead>SLA</TableHead>
                   <TableHead>Departman</TableHead>
                   <TableHead>Oluşturulma Tarihi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((request) => (
-                  <TableRow
-                    key={request.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/requests/${request.id}`)}
-                    tabIndex={0}
-                    role="link"
-                    aria-label={`${request.title} talebini görüntüle`}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        if (event.key === ' ') {
-                          event.preventDefault()
+                {data.map((request) => {
+                  const sla = getSlaDisplay(request)
+
+                  return (
+                    <TableRow
+                      key={request.id}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/requests/${request.id}`)}
+                      tabIndex={0}
+                      role="link"
+                      aria-label={`${request.title} talebini görüntüle`}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          if (event.key === ' ') {
+                            event.preventDefault()
+                          }
+                          navigate(`/requests/${request.id}`)
                         }
-                        navigate(`/requests/${request.id}`)
-                      }
-                    }}
-                  >
-                    <TableCell>#{request.request_number}</TableCell>
-                    <TableCell>{request.title}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
-                        {request.is_overdue && <Badge variant="destructive">Gecikmiş</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell>{PRIORITY_LABELS[request.priority] ?? request.priority}</TableCell>
-                    <TableCell>{request.department_name}</TableCell>
-                    <TableCell>{new Date(request.created_at).toLocaleString('tr-TR')}</TableCell>
-                  </TableRow>
-                ))}
+                      }}
+                    >
+                      <TableCell>#{request.request_number}</TableCell>
+                      <TableCell>{request.title}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
+                          {request.is_overdue && <Badge variant="destructive">Gecikmiş</Badge>}
+                        </div>
+                      </TableCell>
+                      <TableCell>{PRIORITY_LABELS[request.priority] ?? request.priority}</TableCell>
+                      <TableCell className={sla ? SLA_TONE_CLASSES[sla.tone] : undefined}>
+                        {sla?.label ?? '-'}
+                      </TableCell>
+                      <TableCell>{request.department_name}</TableCell>
+                      <TableCell>{new Date(request.created_at).toLocaleString('tr-TR')}</TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

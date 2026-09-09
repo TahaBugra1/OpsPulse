@@ -76,6 +76,51 @@ export const REQUESTS_PAGE_TITLE: Record<string, string> = {
   ADMIN: 'Tüm Talepler',
 }
 
+export type SlaTone = 'normal' | 'warning' | 'overdue'
+
+export interface SlaDisplay {
+  label: string
+  tone: SlaTone
+}
+
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+
+// Supplies the SLA label + tone; the pages map the tone to a class name, the
+// same way STATUS_LABELS supplies a label and no styling.
+//
+// Whether a request is late is the SERVER's call (`is_overdue`) - the client
+// clock can be skewed, so local arithmetic is only ever used to measure how
+// far away the deadline is, never to decide which side of it we are on.
+// Returns null both for terminal statuses (no deadline left to meet) and for
+// an unusable sla_due_at; both render as '-'.
+export function getSlaDisplay(request: RequestListItem): SlaDisplay | null {
+  if (request.status === 'COMPLETED' || request.status === 'REJECTED') return null
+  if (!request.sla_due_at) return null
+
+  const dueAt = new Date(request.sla_due_at).getTime()
+  if (Number.isNaN(dueAt)) return null
+
+  const remainingMs = dueAt - Date.now()
+  const amountMs = Math.abs(remainingMs)
+
+  let amount: string
+  if (amountMs >= DAY_MS) amount = `${Math.floor(amountMs / DAY_MS)} gün`
+  else if (amountMs >= HOUR_MS) amount = `${Math.floor(amountMs / HOUR_MS)} saat`
+  else if (amountMs >= MINUTE_MS) amount = `${Math.floor(amountMs / MINUTE_MS)} dakika`
+  else amount = '1 dakikadan az'
+
+  if (request.is_overdue) return { label: `${amount} gecikti`, tone: 'overdue' }
+
+  // The warning threshold is the last quarter of this request's own SLA
+  // window, never a fixed hour count - the backend owns the HIGH/MEDIUM/LOW
+  // durations and recomputes sla_due_at when priority changes.
+  const windowMs = dueAt - new Date(request.created_at).getTime()
+  const tone: SlaTone = remainingMs <= windowMs * 0.25 ? 'warning' : 'normal'
+  return { label: `${amount} kaldı`, tone }
+}
+
 export function useRequests() {
   return useQuery({
     queryKey: ['requests'],

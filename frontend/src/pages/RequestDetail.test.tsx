@@ -1395,4 +1395,106 @@ describe('RequestDetail page', () => {
       expect(screen.getByRole('button', { name: 'Sil' })).toBeInTheDocument()
     })
   })
+
+  // ---------------------------------------------------------------------
+  // Son Tarih (SLA) row — sla-visibility task
+  // ---------------------------------------------------------------------
+
+  // getSlaDisplay() reads Date.now(), so the request is built as an offset
+  // from a frozen NOW instead of makeRequest()'s literal default deadline,
+  // whose label would change every day real time advances. The clock is faked
+  // (and restored) inside this describe only, so every test above keeps
+  // running on real timers; shouldAdvanceTime keeps waitFor working on the
+  // faked clock, so each offset is kept well clear of a unit boundary.
+  describe('Son Tarih row', () => {
+    const NOW = new Date('2026-09-10T12:00:00.000Z')
+    const MINUTE = 60_000
+    const HOUR = 60 * MINUTE
+
+    function fromNow(offsetMs: number) {
+      return new Date(NOW.getTime() + offsetMs).toISOString()
+    }
+
+    // The value cell is the <dd> paired with the "Son Tarih" <dt>; reading it
+    // this way avoids matching the "-" that other empty fields may render.
+    function sonTarihValue() {
+      return screen.getByText('Son Tarih').nextElementSibling as HTMLElement
+    }
+
+    function mockDetailFetches(request: RequestListItem) {
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, request))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // AC6/AC1: the detail page gains a "Son Tarih" row showing the absolute
+    // deadline alongside the remaining time.
+    it('renders a "Son Tarih" row with the deadline and the remaining time', async () => {
+      const request = makeRequest({
+        status: 'ASSIGNED',
+        is_overdue: false,
+        created_at: fromNow(-30 * MINUTE),
+        sla_due_at: fromNow(3 * HOUR + 30 * MINUTE),
+      })
+      mockDetailFetches(request)
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Son Tarih')).toBeInTheDocument())
+
+      const value = sonTarihValue()
+      expect(value.textContent).toContain(new Date(request.sla_due_at).toLocaleString('tr-TR'))
+      expect(value.textContent).toContain('3 saat kaldı')
+      expect(screen.getByText('3 saat kaldı')).toHaveClass('text-muted-foreground')
+    })
+
+    // AC2: an overdue request says how late it is, in the overdue tone.
+    it('renders the overdue amount in the destructive tone for an overdue request', async () => {
+      const request = makeRequest({
+        status: 'IN_PROGRESS',
+        is_overdue: true,
+        created_at: fromNow(-10 * HOUR),
+        sla_due_at: fromNow(-6 * HOUR - 30 * MINUTE),
+      })
+      mockDetailFetches(request)
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Son Tarih')).toBeInTheDocument())
+
+      expect(sonTarihValue().textContent).toContain('6 saat gecikti')
+      expect(screen.getByText('6 saat gecikti')).toHaveClass('text-destructive')
+    })
+
+    // AC3: a terminal status has no deadline left to meet — no date, no
+    // remaining time, just "-".
+    it('shows only "-" in the Son Tarih row for a terminal-status request', async () => {
+      const request = makeRequest({
+        status: 'COMPLETED',
+        is_overdue: false,
+        created_at: fromNow(-10 * HOUR),
+        sla_due_at: fromNow(-6 * HOUR - 30 * MINUTE),
+      })
+      mockDetailFetches(request)
+
+      renderDetail()
+
+      await waitFor(() => expect(screen.getByText('Son Tarih')).toBeInTheDocument())
+
+      expect(sonTarihValue().textContent).toBe('-')
+      expect(
+        sonTarihValue().textContent?.includes(new Date(request.sla_due_at).toLocaleString('tr-TR')),
+      ).toBe(false)
+    })
+  })
 })

@@ -20,10 +20,12 @@ import { useAuth } from '@/context/AuthContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
+  getSlaDisplay,
   PRIORITY_LABELS,
   type RequestComment,
   type RequestHistoryEntry,
   type RequestListItem,
+  type SlaTone,
   STATUS_LABELS,
   useAddComment,
   useChangePriority,
@@ -44,6 +46,12 @@ import {
 
 const SELECT_CLASSES =
   'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40'
+
+const SLA_TONE_CLASSES: Record<SlaTone, string> = {
+  normal: 'text-muted-foreground',
+  warning: 'text-warning',
+  overdue: 'text-destructive',
+}
 
 function formatHistoryEntry(entry: RequestHistoryEntry): string {
   if (entry.action === 'CREATED') {
@@ -258,6 +266,7 @@ export default function RequestDetail() {
     !!request && (request.status === 'ASSIGNED' || request.status === 'IN_PROGRESS') && isAssignee
   const canComment = !!user && user.role !== 'ADMIN'
   const hasActions = canClaim || canStart || canComplete || canReject || canChangePriority
+  const sla = request ? getSlaDisplay(request) : null
 
   return (
     <div className="flex flex-col gap-4">
@@ -309,6 +318,18 @@ export default function RequestDetail() {
 
                 <dt className="text-muted-foreground">Atanan</dt>
                 <dd>{request.assigned_to_name ?? '-'}</dd>
+
+                <dt className="text-muted-foreground">Son Tarih</dt>
+                <dd>
+                  {sla ? (
+                    <>
+                      {new Date(request.sla_due_at).toLocaleString('tr-TR')} ·{' '}
+                      <span className={SLA_TONE_CLASSES[sla.tone]}>{sla.label}</span>
+                    </>
+                  ) : (
+                    '-'
+                  )}
+                </dd>
 
                 <dt className="text-muted-foreground">Oluşturulma Tarihi</dt>
                 <dd>{new Date(request.created_at).toLocaleString('tr-TR')}</dd>
