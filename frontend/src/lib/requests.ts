@@ -229,6 +229,36 @@ export function useDeleteComment(requestId: string, commentId: string) {
   })
 }
 
+export interface BulkCommentDeleteResult {
+  succeeded: number
+  conflicted: number
+  failed: number
+}
+
+// There is no bulk endpoint by design: this loops the existing per-comment
+// delete endpoint one at a time (never in parallel) and swallows each item's
+// error so a single failure - typically a 409 from the comment having already
+// been deleted - does not stop the remaining ids.
+export function useBulkDeleteComments(requestId: string) {
+  return useMutation({
+    mutationFn: async ({ commentIds }: { commentIds: string[] }) => {
+      const result: BulkCommentDeleteResult = { succeeded: 0, conflicted: 0, failed: 0 }
+
+      for (const commentId of commentIds) {
+        try {
+          await apiDelete<RequestComment>(`/api/requests/${requestId}/comments/${commentId}`)
+          result.succeeded += 1
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) result.conflicted += 1
+          else result.failed += 1
+        }
+      }
+
+      return result
+    },
+  })
+}
+
 export interface QueueFilters {
   q?: string
   request_type_id?: string

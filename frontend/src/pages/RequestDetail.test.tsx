@@ -1,13 +1,19 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RequestDetail from './RequestDetail'
 import { AuthProvider } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import type { AuthUser } from '@/lib/authStorage'
 import type { RequestComment, RequestHistoryEntry, RequestListItem } from '@/lib/requests'
+
+// RequestDetail.tsx uses sonner's toast for the bulk-comment-delete summary.
+// renderDetail() never mounts a real <Toaster />, so a real toast never
+// reaches the DOM - the mock lets tests assert on what would have been shown.
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 // Real socket.io-client is mocked so no actual WebSocket connection is
 // attempted in jsdom — SocketProvider calls createSocket()/io() for real
@@ -152,6 +158,8 @@ describe('RequestDetail page', () => {
     mockSocket.disconnect.mockClear()
     mockSocket.__listeners.clear()
     mockIo.mockClear()
+    vi.mocked(toast.success).mockClear()
+    vi.mocked(toast.error).mockClear()
   })
 
   afterEach(() => {
@@ -1408,6 +1416,199 @@ describe('RequestDetail page', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Bu işlem için yetkiniz yok')
       expect(screen.getByText('Silinemeyecek içerik')).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Sil' })).toBeInTheDocument()
+    })
+  })
+
+  // ---------------------------------------------------------------------
+  // Bulk comment delete — ADMIN-only multi-select + confirm dialog
+  // ---------------------------------------------------------------------
+  describe('bulk comment delete', () => {
+    const admin: AuthUser = { ...fakeUser, role: 'ADMIN', department_id: null }
+
+    // AC1: an ADMIN can select multiple comments and delete them all via the
+    // confirm dialog - the underlying DELETE calls happen one at a time, in
+    // selection order, not in parallel.
+    it('deletes multiple selected comments via sequential DELETE calls and shows a success toast', async () => {
+      const user = userEvent.setup()
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      const c2 = makeComment({ id: 'c2', author_id: 'user-2', content: 'İkinci yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1, c2]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+
+      const checkboxes = screen.getAllByRole('checkbox', { name: 'Yorumu seç' })
+      expect(checkboxes.length).toBe(2)
+      await user.click(checkboxes[0])
+      await user.click(checkboxes[1])
+
+      expect(screen.getByText('2 yorum seçildi')).toBeInTheDocument()
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, { ...c1, is_deleted: true }))
+        .mockResolvedValueOnce(jsonResponse(200, { ...c2, is_deleted: true }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, [
+            { ...c1, is_deleted: true, content: 'Bu yorum silindi' },
+            { ...c2, is_deleted: true, content: 'Bu yorum silindi' },
+          ]),
+        )
+
+      await user.click(screen.getByRole('button', { name: 'Seçilenleri Sil' }))
+
+      const dialog = screen.getByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Sil' }))
+
+      await waitFor(() => expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(toast.success).mock.calls[0][0]).toBe('2 yorum silindi')
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+
+      const deleteCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
+      expect(deleteCalls.length).toBe(2)
+      expect(String(deleteCalls[0][0])).toContain('/api/requests/uuid-1111-2222/comments/c1')
+      expect(String(deleteCalls[1][0])).toContain('/api/requests/uuid-1111-2222/comments/c2')
+
+      // The dialog closed and the selection was cleared.
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByText(/yorum seçildi/)).not.toBeInTheDocument()
+    })
+
+    // AC2: one 409 (already deleted) among the selected comments does not
+    // block the others from being deleted - the outcome is tallied separately.
+    it('does not block the rest of the batch when one selected comment is already deleted (409)', async () => {
+      const user = userEvent.setup()
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      const c2 = makeComment({ id: 'c2', author_id: 'user-2', content: 'İkinci yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1, c2]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+
+      await user.click(screen.getByRole('checkbox', { name: 'Tümünü Seç' }))
+      expect(screen.getByText('2 yorum seçildi')).toBeInTheDocument()
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, { ...c1, is_deleted: true }))
+        .mockResolvedValueOnce(errorResponse(409, 'Bu yorum zaten silinmiş'))
+        .mockResolvedValueOnce(
+          jsonResponse(200, [{ ...c1, is_deleted: true, content: 'Bu yorum silindi' }, c2]),
+        )
+
+      await user.click(screen.getByRole('button', { name: 'Seçilenleri Sil' }))
+      const dialog = screen.getByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Sil' }))
+
+      await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(toast.error).mock.calls[0][0]).toBe('1 yorum silindi, 1 yorum zaten silinmiş')
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+
+      const deleteCalls = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
+      expect(deleteCalls.length).toBe(2)
+      expect(String(deleteCalls[0][0])).toContain('/comments/c1')
+      expect(String(deleteCalls[1][0])).toContain('/comments/c2')
+    })
+
+    // AC3 (regression): a non-ADMIN role never sees a comment checkbox, the
+    // "Tümünü Seç" control, or the bulk action bar.
+    it.each([
+      ['EMPLOYEE', fakeUser],
+      ['DEPARTMENT_AUTHORITY', { ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' } as AuthUser],
+    ])('shows no bulk-select checkboxes or actions for a %s', async (_label, roleUser) => {
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(roleUser)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+
+      expect(screen.queryByRole('checkbox', { name: 'Yorumu seç' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('checkbox', { name: 'Tümünü Seç' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Seçilenleri Sil' })).not.toBeInTheDocument()
+    })
+
+    // AC4: with nothing selected, the bulk action bar never renders, even
+    // when there are selectable comments and the viewer is an ADMIN.
+    it('shows no bulk action bar while no comment is selected', async () => {
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+
+      expect(screen.queryByText(/yorum seçildi/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Seçilenleri Sil' })).not.toBeInTheDocument()
+    })
+
+    // AC5: "Tümünü Seç" selects every non-deleted comment; an already-deleted
+    // comment never gets a checkbox and is excluded from the "select all" set.
+    it('"Tümünü Seç" selects only non-deleted comments, skipping an already-deleted one', async () => {
+      const user = userEvent.setup()
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      const c2 = makeComment({ id: 'c2', author_id: 'user-2', content: 'İkinci yorum' })
+      const deleted = makeComment({
+        id: 'c3',
+        author_id: 'user-2',
+        content: 'Bu yorum silindi',
+        is_deleted: true,
+      })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1, c2, deleted]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+
+      // Only the two non-deleted comments ever get a checkbox.
+      expect(screen.getAllByRole('checkbox', { name: 'Yorumu seç' }).length).toBe(2)
+
+      await user.click(screen.getByRole('checkbox', { name: 'Tümünü Seç' }))
+
+      expect(screen.getByText('2 yorum seçildi')).toBeInTheDocument()
+    })
+
+    // AC6: cancelling the confirm dialog with "Vazgeç" sends no fetch call,
+    // keeps the selection intact, and just closes the dialog.
+    it('clicking Vazgeç in the confirm dialog sends no fetch and keeps the selection', async () => {
+      const user = userEvent.setup()
+      const c1 = makeComment({ id: 'c1', author_id: 'user-2', content: 'Birinci yorum' })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(jsonResponse(200, makeRequest()))
+        .mockResolvedValueOnce(jsonResponse(200, [c1]))
+        .mockResolvedValueOnce(jsonResponse(200, []))
+
+      renderDetail(admin)
+
+      await waitFor(() => expect(screen.getByText('Birinci yorum')).toBeInTheDocument())
+      const fetchCallsBefore = vi.mocked(fetch).mock.calls.length
+
+      await user.click(screen.getByRole('checkbox', { name: 'Yorumu seç' }))
+      await user.click(screen.getByRole('button', { name: 'Seçilenleri Sil' }))
+
+      const dialog = screen.getByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }))
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByText('1 yorum seçildi')).toBeInTheDocument()
+      expect(vi.mocked(fetch).mock.calls.length).toBe(fetchCallsBefore)
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
     })
   })
 
