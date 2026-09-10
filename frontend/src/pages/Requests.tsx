@@ -16,6 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import {
   getSlaDisplay,
   PRIORITY_LABELS,
@@ -36,6 +37,7 @@ export default function Requests() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { data: requestTypes } = useRequestTypes()
+  usePageTitle(REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler')
 
   const [searchParams, setSearchParams] = useSearchParams()
   const status = searchParams.get('status') ?? ''
@@ -128,14 +130,13 @@ export default function Requests() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</h1>
-        {user!.role !== 'ADMIN' && (
+      {user!.role !== 'ADMIN' && (
+        <div className="flex items-center justify-end">
           <Button type="button" onClick={() => navigate('/requests/new')}>
             Yeni Talep
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

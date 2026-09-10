@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-route
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Requests from './Requests'
 import { AuthProvider } from '@/context/AuthContext'
+import { PageTitleProvider, usePageTitleValue } from '@/context/PageTitleContext'
 import type { AuthUser } from '@/lib/authStorage'
 import type { RequestListItem } from '@/lib/requests'
 
@@ -64,6 +65,14 @@ function DetailProbe() {
   return <div>DETAIL PAGE for id={id}</div>
 }
 
+// The page title now flows into PageTitleContext (set from usePageTitle in a
+// useEffect) and is rendered by the AppShell header, not by the page. Isolated
+// page tests render without the shell, so this probe surfaces the context value.
+function TitleProbe() {
+  const title = usePageTitleValue()
+  return <div data-testid="page-title">{title}</div>
+}
+
 // MemoryRouter never touches window.location, so URL-sync assertions read the
 // current search string off this hidden probe instead.
 function RequestsWithLocationProbe() {
@@ -96,12 +105,15 @@ function renderRequests(user: AuthUser = fakeUser) {
   return render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <MemoryRouter initialEntries={['/requests']}>
-          <Routes>
-            <Route path="/requests" element={<RequestsWithLocationProbe />} />
-            <Route path="/requests/:id" element={<DetailProbe />} />
-          </Routes>
-        </MemoryRouter>
+        <PageTitleProvider>
+          <TitleProbe />
+          <MemoryRouter initialEntries={['/requests']}>
+            <Routes>
+              <Route path="/requests" element={<RequestsWithLocationProbe />} />
+              <Route path="/requests/:id" element={<DetailProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </PageTitleProvider>
       </AuthProvider>
     </QueryClientProvider>,
   )
@@ -244,36 +256,28 @@ describe('Requests page', () => {
     expect(within(onTimeRow as HTMLElement).queryByText('Gecikmiş')).not.toBeInTheDocument()
   })
 
-  // AC10: page title is role-aware
+  // AC10: page title is role-aware. The page feeds usePageTitle() (set in a
+  // useEffect) instead of rendering an <h1>; the AppShell header renders it.
+  // These isolated tests read it back off the PageTitleContext probe.
   it('shows "Taleplerim" as the title for an EMPLOYEE user', async () => {
     mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
-    await waitFor(() => expect(screen.getByText('Taleplerim')).toBeInTheDocument())
+    expect(await screen.findByTestId('page-title')).toHaveTextContent('Taleplerim')
   })
 
   it('shows "Departman Talepleri" as the title for a DEPARTMENT_AUTHORITY user', async () => {
     mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     renderRequests({ ...fakeUser, role: 'DEPARTMENT_AUTHORITY', department_id: 'dept-1' })
-    await waitFor(() => expect(screen.getByText('Departman Talepleri')).toBeInTheDocument())
+    expect(await screen.findByTestId('page-title')).toHaveTextContent('Departman Talepleri')
   })
 
   it('shows "Tüm Talepler" as the title for an ADMIN user', async () => {
     mockRequestTypesFetch()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
     renderRequests({ ...fakeUser, role: 'ADMIN' })
-    await waitFor(() => expect(screen.getByText('Tüm Talepler')).toBeInTheDocument())
-  })
-
-  // Round-2 structure: the title is a real <h1> above the card, not a CardTitle div inside it
-  it('renders the page title as a real heading element', async () => {
-    mockRequestTypesFetch()
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
-    renderRequests({ ...fakeUser, role: 'EMPLOYEE' })
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Taleplerim' })).toBeInTheDocument(),
-    )
+    expect(await screen.findByTestId('page-title')).toHaveTextContent('Tüm Talepler')
   })
 
   // AC1: EMPLOYEE (and DEPARTMENT_AUTHORITY) users see a "Yeni Talep" button

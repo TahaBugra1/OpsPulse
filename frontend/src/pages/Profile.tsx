@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { ROLE_LABELS, useProfile, useUpdateProfile } from '@/lib/users'
 import { profileSchema, type ProfileFormValues } from '@/lib/validation'
 
@@ -17,6 +18,7 @@ export default function Profile() {
   const queryClient = useQueryClient()
   const mutation = useUpdateProfile()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  usePageTitle('Profil')
 
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -55,7 +57,6 @@ export default function Profile() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Profil</h1>
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}

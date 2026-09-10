@@ -28,6 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
@@ -92,6 +93,7 @@ export default function Queue() {
   const { user } = useAuth()
   const socket = useSocket()
   const queryClient = useQueryClient()
+  usePageTitle('Kuyruk')
   const { data: requestTypes } = useRequestTypes()
   const canClaim = user?.role === 'DEPARTMENT_AUTHORITY'
 
@@ -303,7 +305,6 @@ export default function Queue() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Kuyruk</h1>
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

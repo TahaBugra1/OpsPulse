@@ -10,8 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Separator } from '@/components/ui/separator'
 import { useAuth } from '@/context/AuthContext'
+import { PageTitleProvider, usePageTitleValue } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
 import { ROLE_LABELS } from '@/lib/users'
 import { cn } from '@/lib/utils'
@@ -46,6 +46,11 @@ const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: Lucid
 // their request list — the operational entry point for their actual work.
 export function getLandingPath(role: string): string {
   return role === 'ADMIN' ? '/analytics' : '/requests'
+}
+
+function HeaderTitle() {
+  const title = usePageTitleValue()
+  return <h1 className="text-lg font-semibold text-foreground">{title}</h1>
 }
 
 export function AppShell() {
@@ -99,9 +104,9 @@ export function AppShell() {
   }, [socket, queryClient])
 
   return (
-    <div className="flex h-svh bg-background">
-      <aside className="flex w-56 shrink-0 flex-col justify-between border-r border-sidebar-border bg-sidebar p-4">
-        <div>
+    <PageTitleProvider>
+      <div className="flex h-svh bg-background">
+        <aside className="flex w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4">
           <div className="mb-5 flex items-center gap-2 px-3 py-2">
             <Activity className="size-6 text-sidebar-primary" />
             <span className="text-lg font-semibold text-sidebar-foreground">OpsPulse</span>
@@ -138,91 +143,93 @@ export function AppShell() {
               )
             })}
           </nav>
-        </div>
+        </aside>
 
-        <div className="flex flex-col gap-3">
-          <DropdownMenu onOpenChange={setNotificationsOpen}>
-            <DropdownMenuTrigger
-              className="relative flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-sidebar-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-popup-open:bg-sidebar-accent"
-            >
-              <span className="relative inline-flex">
-                <Bell className="size-4" />
-                {!!unreadCount && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-medium text-sidebar-primary-foreground">
-                    {unreadCount}
-                  </span>
-                )}
-              </span>
-              Bildirimler
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-80">
-              <div className="flex items-center justify-between px-1.5 py-1">
-                <span className="text-xs font-medium text-muted-foreground">Bildirimler</span>
-                <button
-                  type="button"
-                  className="text-xs font-medium text-primary hover:underline"
-                  onClick={handleMarkAllAsRead}
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-8">
+            <HeaderTitle />
+            <div className="flex items-center gap-1">
+              <DropdownMenu onOpenChange={setNotificationsOpen}>
+                <DropdownMenuTrigger
+                  aria-label="Bildirimler"
+                  className="relative flex size-9 items-center justify-center rounded-md text-foreground outline-none hover:bg-accent hover:text-accent-foreground data-popup-open:bg-accent"
                 >
-                  Tümünü Okundu İşaretle
-                </button>
-              </div>
-              <DropdownMenuSeparator />
-              {notificationsQuery.data && notificationsQuery.data.length === 0 && (
-                <div className="px-1.5 py-2 text-sm text-muted-foreground">Bildirim yok</div>
-              )}
-              {notificationsQuery.data?.map((notification) => (
-                <DropdownMenuItem key={notification.id} onClick={() => handleNotificationClick(notification)}>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="whitespace-normal">{notification.message}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(notification.created_at).toLocaleString('tr-TR')}
+                  <Bell className="size-4" />
+                  {!!unreadCount && (
+                    <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
+                      {unreadCount}
+                    </span>
+                  )}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end" className="w-80">
+                  <div className="flex items-center justify-between px-1.5 py-1">
+                    <span className="text-xs font-medium text-muted-foreground">Bildirimler</span>
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-primary hover:underline"
+                      onClick={handleMarkAllAsRead}
+                    >
+                      Tümünü Okundu İşaretle
+                    </button>
+                  </div>
+                  <DropdownMenuSeparator />
+                  {notificationsQuery.data && notificationsQuery.data.length === 0 && (
+                    <div className="px-1.5 py-2 text-sm text-muted-foreground">Bildirim yok</div>
+                  )}
+                  {notificationsQuery.data?.map((notification) => (
+                    <DropdownMenuItem key={notification.id} onClick={() => handleNotificationClick(notification)}>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="whitespace-normal">{notification.message}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(notification.created_at).toLocaleString('tr-TR')}
+                        </span>
+                      </div>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent data-popup-open:bg-accent"
+                >
+                  <div
+                    aria-hidden="true"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
+                  >
+                    {initials}
+                  </div>
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {user?.name} {user?.surname ?? ''}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
                     </span>
                   </div>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end" className="w-56">
+                  <DropdownMenuItem onClick={() => navigate('/profile')}>
+                    <User className="size-4" />
+                    Profilim
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={logout}>
+                    <LogOut className="size-4" />
+                    Çıkış Yap
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </header>
 
-          <Separator className="bg-sidebar-border" />
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left outline-none hover:bg-sidebar-accent data-popup-open:bg-sidebar-accent"
-            >
-              <div
-                aria-hidden="true"
-                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-medium text-sidebar-primary-foreground"
-              >
-                {initials}
-              </div>
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-sm font-medium text-sidebar-foreground">
-                  {user?.name} {user?.surname ?? ''}
-                </span>
-                <span className="truncate text-xs text-sidebar-foreground/60">
-                  {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
-                </span>
-              </div>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="top" align="start" className="w-56">
-              <DropdownMenuItem onClick={() => navigate('/profile')}>
-                <User className="size-4" />
-                Profilim
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={logout}>
-                <LogOut className="size-4" />
-                Çıkış Yap
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <main className="flex-1 overflow-auto px-8 py-6">
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
+          </main>
         </div>
-      </aside>
-
-      <main className="flex-1 overflow-auto px-8 py-6">
-        <ErrorBoundary>
-          <Outlet />
-        </ErrorBoundary>
-      </main>
-    </div>
+      </div>
+    </PageTitleProvider>
   )
 }

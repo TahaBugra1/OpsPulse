@@ -18,6 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import {
   STAGE_LABELS,
   useAnalyticsBottlenecks,
@@ -77,10 +78,10 @@ export default function Analytics() {
 function EmployeeAnalytics() {
   const summaryQuery = useEmployeeSummary()
   const slaQuery = useEmployeeSla()
+  usePageTitle('Genel Bakış')
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Genel Bakış</h1>
 
       <Card>
         <CardHeader>
@@ -186,10 +187,10 @@ function FullAnalytics() {
 
   const bottlenecksQuery = useAnalyticsBottlenecks()
   const bottlenecks = bottlenecksQuery.data
+  usePageTitle('Genel Bakış')
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Genel Bakış</h1>
 
       <Card>
         <CardHeader>

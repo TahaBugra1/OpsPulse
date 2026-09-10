@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { PRIORITY_LABELS, useCreateRequest, useRequestTypes } from '@/lib/requests'
 import { requestSchema, type RequestFormValues } from '@/lib/validation'
 
@@ -17,6 +18,7 @@ export default function NewRequest() {
   const { data: requestTypes, isPending, isError, error, refetch } = useRequestTypes()
   const mutation = useCreateRequest()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  usePageTitle('Yeni Talep')
 
   const form = useForm<RequestFormValues>({
     resolver: zodResolver(requestSchema),
@@ -38,7 +40,6 @@ export default function NewRequest() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Yeni Talep</h1>
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}

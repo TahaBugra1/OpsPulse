@@ -252,8 +252,8 @@ describe('Queue page', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Üstlen' })).not.toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    // page remains rendered/interactive
-    expect(screen.getByText('Kuyruk')).toBeInTheDocument()
+    // page remains rendered/interactive (the search input is always present)
+    expect(screen.getByLabelText('Ara')).toBeInTheDocument()
   })
 
   // AC5: empty queue shows the empty state, no table.

@@ -18,6 +18,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { useDepartments } from '@/lib/departments'
 import { ROLE_LABELS, useCreateDepartmentAuthority, useDeactivateUser, useUsers } from '@/lib/users'
 import { createDepartmentAuthoritySchema, type CreateDepartmentAuthorityFormValues } from '@/lib/validation'
@@ -30,6 +31,7 @@ export default function AdminUsers() {
   const deactivateMutation = useDeactivateUser()
   const [submitError, setSubmitError] = useState<string | null>(null)
   const { data: users, isPending: usersPending, isError: usersIsError, error: usersError, refetch: refetchUsers } = useUsers()
+  usePageTitle('Kullanıcılar')
 
   const form = useForm<CreateDepartmentAuthorityFormValues>({
     resolver: zodResolver(createDepartmentAuthoritySchema),
@@ -59,8 +61,6 @@ export default function AdminUsers() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Kullanıcılar</h1>
-
       <Card className="w-full max-w-3xl">
         <CardHeader>
           <CardTitle>Yeni Departman Yetkilisi</CardTitle>

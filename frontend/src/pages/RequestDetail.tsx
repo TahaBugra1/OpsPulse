@@ -20,6 +20,7 @@ import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
@@ -82,6 +83,7 @@ export default function RequestDetail() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const requestQuery = useRequest(requestId)
+  usePageTitle('Talep Detayı')
   const commentsQuery = useRequestComments(requestId)
   const historyQuery = useRequestHistory(requestId)
   const socket = useSocket()
@@ -309,7 +311,6 @@ export default function RequestDetail() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Talep Detayı</h1>
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
