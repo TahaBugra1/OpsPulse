@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -30,12 +31,6 @@ const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   warning: 'text-warning',
   overdue: 'text-destructive',
 }
-
-// Matches Input's exact Tailwind class list (see src/components/ui/input.tsx)
-// per the project's shadcn/native-select-fallback convention (established in
-// NewRequest.tsx — no shadcn Select component exists yet).
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
 
 export default function Requests() {
   const navigate = useNavigate()
@@ -160,9 +155,8 @@ export default function Requests() {
               <label htmlFor="requests-status" className="text-sm font-medium">
                 Durum
               </label>
-              <select
+              <Select
                 id="requests-status"
-                className={SELECT_CLASSES}
                 value={status}
                 onChange={handleStatusChange}
                 disabled={assignedToMe}
@@ -173,15 +167,14 @@ export default function Requests() {
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="requests-request-type" className="text-sm font-medium">
                 Talep Tipi
               </label>
-              <select
+              <Select
                 id="requests-request-type"
-                className={SELECT_CLASSES}
                 value={requestTypeId}
                 onChange={handleRequestTypeChange}
               >
@@ -191,15 +184,14 @@ export default function Requests() {
                     {requestType.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="requests-priority" className="text-sm font-medium">
                 Öncelik
               </label>
-              <select
+              <Select
                 id="requests-priority"
-                className={SELECT_CLASSES}
                 value={priority}
                 onChange={handlePriorityChange}
               >
@@ -209,7 +201,7 @@ export default function Requests() {
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             {user?.role === 'DEPARTMENT_AUTHORITY' && (
               <div className="flex items-center gap-2">

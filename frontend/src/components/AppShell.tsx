@@ -102,7 +102,7 @@ export function AppShell() {
     <div className="flex h-svh bg-background">
       <aside className="flex w-56 shrink-0 flex-col justify-between border-r border-sidebar-border bg-sidebar p-4">
         <div>
-          <div className="mb-4 flex items-center gap-2 px-3 py-2">
+          <div className="mb-5 flex items-center gap-2 px-3 py-2">
             <Activity className="size-6 text-sidebar-primary" />
             <span className="text-lg font-semibold text-sidebar-foreground">OpsPulse</span>
           </div>
@@ -115,13 +115,25 @@ export function AppShell() {
                   to={item.to}
                   className={({ isActive }) =>
                     cn(
-                      'flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                      isActive && 'bg-sidebar-primary text-sidebar-primary-foreground',
+                      'relative flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium',
+                      isActive
+                        ? 'bg-sidebar-accent text-sidebar-foreground'
+                        : 'text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
                     )
                   }
                 >
-                  <Icon className="size-4" />
-                  {item.label}
+                  {({ isActive }) => (
+                    <>
+                      {isActive && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute inset-y-1 left-0 w-1.5 rounded-full bg-sidebar-primary"
+                        />
+                      )}
+                      <Icon className={cn('size-4', isActive && 'text-sidebar-primary')} />
+                      {item.label}
+                    </>
+                  )}
                 </NavLink>
               )
             })}
@@ -136,7 +148,7 @@ export function AppShell() {
               <span className="relative inline-flex">
                 <Bell className="size-4" />
                 {!!unreadCount && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground">
+                  <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-sidebar-primary px-1 text-[10px] font-medium text-sidebar-primary-foreground">
                     {unreadCount}
                   </span>
                 )}
@@ -206,7 +218,7 @@ export function AppShell() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto p-8">
+      <main className="flex-1 overflow-auto px-8 py-6">
         <ErrorBoundary>
           <Outlet />
         </ErrorBoundary>

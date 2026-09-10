@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -41,12 +42,6 @@ import {
   useRequestTypes,
 } from '@/lib/requests'
 import { rejectNoteSchema, type RejectNoteFormValues } from '@/lib/validation'
-
-// Matches Input's exact Tailwind class list (see src/components/ui/input.tsx)
-// per the project's shadcn/native-select-fallback convention (established in
-// NewRequest.tsx — no shadcn Select component exists yet).
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
 
 const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   normal: 'text-muted-foreground',
@@ -328,9 +323,8 @@ export default function Queue() {
               <label htmlFor="queue-request-type" className="text-sm font-medium">
                 Talep Tipi
               </label>
-              <select
+              <Select
                 id="queue-request-type"
-                className={SELECT_CLASSES}
                 value={requestTypeId}
                 onChange={handleRequestTypeChange}
               >
@@ -340,15 +334,14 @@ export default function Queue() {
                     {requestType.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="queue-priority" className="text-sm font-medium">
                 Öncelik
               </label>
-              <select
+              <Select
                 id="queue-priority"
-                className={SELECT_CLASSES}
                 value={priority}
                 onChange={handlePriorityChange}
               >
@@ -358,7 +351,7 @@ export default function Queue() {
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="queue-date-from" className="text-sm font-medium">
@@ -395,9 +388,8 @@ export default function Queue() {
               <label htmlFor="queue-saved-filter" className="text-sm font-medium">
                 Kayıtlı Filtreler
               </label>
-              <select
+              <Select
                 id="queue-saved-filter"
-                className={SELECT_CLASSES}
                 value=""
                 onChange={(event) => handleApplySavedFilter(event.target.value)}
               >
@@ -407,7 +399,7 @@ export default function Queue() {
                     {filter.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="queue-save-filter-name" className="text-sm font-medium">

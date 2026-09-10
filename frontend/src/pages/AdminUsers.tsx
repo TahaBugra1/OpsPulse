@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -20,9 +21,6 @@ import { useAuth } from '@/context/AuthContext'
 import { useDepartments } from '@/lib/departments'
 import { ROLE_LABELS, useCreateDepartmentAuthority, useDeactivateUser, useUsers } from '@/lib/users'
 import { createDepartmentAuthoritySchema, type CreateDepartmentAuthorityFormValues } from '@/lib/validation'
-
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40'
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth()
@@ -159,12 +157,11 @@ export default function AdminUsers() {
                   render={({ field, fieldState }) => (
                     <Field data-invalid={!!fieldState.error}>
                       <FieldLabel htmlFor="admin-user-department">Departman</FieldLabel>
-                      <select
+                      <Select
                         {...field}
                         id="admin-user-department"
                         disabled={createMutation.isPending}
                         aria-invalid={!!fieldState.error}
-                        className={SELECT_CLASSES}
                       >
                         <option value="">Seçiniz</option>
                         {departments.map((department) => (
@@ -172,7 +169,7 @@ export default function AdminUsers() {
                             {department.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                       <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
                     </Field>
                   )}

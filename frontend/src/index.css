@@ -25,7 +25,12 @@
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
+    /* status-semantic color mappings — badges/pills consume these in a later pass */
+    --color-destructive-foreground: var(--destructive-foreground);
     --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
     --color-accent-foreground: var(--accent-foreground);
     --color-accent: var(--accent);
     --color-muted-foreground: var(--muted-foreground);
@@ -50,7 +55,9 @@
 }
 
 :root {
-    --background: oklch(0.97 0.005 260);
+    /* page background: a touch cooler/darker than the white card so card
+       edges and page gutters read as distinct layers */
+    --background: oklch(0.955 0.006 262);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -58,15 +65,27 @@
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.546 0.215 262);
     --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
+    /* secondary / muted / accent are three perceptibly different low-chroma
+       neutrals so a surface hierarchy is possible:
+       muted = lightest subtle-zone/disabled fill,
+       secondary = one step darker for secondary surfaces/buttons,
+       accent = hover / selected-row tint (carries a hair of the primary hue) */
+    --secondary: oklch(0.945 0.003 260);
     --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
+    --muted: oklch(0.968 0.002 260);
     --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
+    --accent: oklch(0.955 0.004 262);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
+    /* text/icon color on a filled --destructive surface */
+    --destructive-foreground: oklch(0.985 0 0);
     --warning: oklch(0.58 0.14 65);
-    --border: oklch(0.922 0 0);
+    /* text/icon color on a filled --warning (amber) surface */
+    --warning-foreground: oklch(0.99 0 0);
+    /* success green, aligned with the --chart-3 teal-green (#1baf7a) */
+    --success: oklch(0.62 0.13 155);
+    --success-foreground: oklch(0.985 0 0);
+    --border: oklch(0.9 0.003 262);
     --input: oklch(0.922 0 0);
     --ring: oklch(0.546 0.215 262);
     /* Categorical chart palette — validated for colorblind separation and
@@ -81,7 +100,9 @@
     --radius: 0.625rem;
     --sidebar: oklch(0.22 0.05 260);
     --sidebar-foreground: oklch(0.95 0.01 260);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
+    /* shares the content --primary hue/chroma; only lighter for legibility
+       on the dark navy sidebar */
+    --sidebar-primary: oklch(0.62 0.19 262);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.28 0.04 260);
     --sidebar-accent-foreground: oklch(0.985 0 0);
@@ -98,15 +119,20 @@
     --popover-foreground: oklch(0.985 0 0);
     --primary: oklch(0.922 0 0);
     --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
+    /* three distinct dark neutrals, mirroring the light-mode hierarchy */
+    --secondary: oklch(0.285 0.003 260);
     --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
+    --muted: oklch(0.255 0.002 260);
     --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
+    --accent: oklch(0.3 0.006 262);
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0 0);
     --warning: oklch(0.79 0.15 75);
-    --border: oklch(1 0 0 / 10%);
+    --warning-foreground: oklch(0.205 0 0);
+    --success: oklch(0.7 0.14 158);
+    --success-foreground: oklch(0.205 0 0);
+    --border: oklch(1 0 0 / 12%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
     --chart-1: #3987e5;
@@ -116,7 +142,8 @@
     --chart-5: #d55181;
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
+    /* shares the content --primary hue/chroma, lighter for legibility */
+    --sidebar-primary: oklch(0.62 0.19 262);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
