@@ -142,6 +142,22 @@ async function listUsers(user) {
   return result.rows;
 }
 
+async function listMyTeam(user) {
+  if (user.role !== 'DEPARTMENT_AUTHORITY') {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT id, name, surname, email, is_active FROM users WHERE role = 'EMPLOYEE' AND department_id = $1 ORDER BY name ASC`,
+      [user.department_id]
+    );
+  } catch (dbErr) {
+    fail(500, 'Ekip listesi getirilemedi, lütfen tekrar deneyin');
+  }
+  return result.rows;
+}
+
 async function createDepartmentAuthority(body, user) {
   if (user.role !== 'ADMIN') {
     fail(403, 'Bu işlem için yetkiniz yok');
@@ -227,4 +243,4 @@ async function deactivateUser(targetId, user) {
   return result.rows[0];
 }
 
-module.exports = { getMyProfile, updateMyProfile, completeDepartment, listUsers, createDepartmentAuthority, deactivateUser };
+module.exports = { getMyProfile, updateMyProfile, completeDepartment, listUsers, listMyTeam, createDepartmentAuthority, deactivateUser };

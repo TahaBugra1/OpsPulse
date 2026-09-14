@@ -57,6 +57,21 @@ export function useUsers() {
   })
 }
 
+export interface TeamMember {
+  id: string
+  name: string
+  surname: string | null
+  email: string
+  is_active: boolean
+}
+
+export function useMyTeam() {
+  return useQuery({
+    queryKey: ['my-team'],
+    queryFn: () => apiGet<TeamMember[]>('/api/users/team'),
+  })
+}
+
 export function useCreateDepartmentAuthority() {
   return useMutation({
     mutationFn: (body: { name: string; surname: string; email: string; password: string; department_id: string }) =>

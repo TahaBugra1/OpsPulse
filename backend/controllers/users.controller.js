@@ -1,4 +1,4 @@
-const { getMyProfile, updateMyProfile, completeDepartment, listUsers, createDepartmentAuthority, deactivateUser } = require('../services/users.service');
+const { getMyProfile, updateMyProfile, completeDepartment, listUsers, listMyTeam, createDepartmentAuthority, deactivateUser } = require('../services/users.service');
 
 async function getMe(req, res) {
   try {
@@ -36,6 +36,15 @@ async function getUsers(req, res) {
   }
 }
 
+async function getMyTeam(req, res) {
+  try {
+    const result = await listMyTeam(req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Ekip listesi getirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
 async function postUser(req, res) {
   try {
     const result = await createDepartmentAuthority(req.body, req.user);
@@ -54,4 +63,4 @@ async function patchDeactivate(req, res) {
   }
 }
 
-module.exports = { getMe, patchMe, patchDepartment, getUsers, postUser, patchDeactivate };
+module.exports = { getMe, patchMe, patchDepartment, getUsers, getMyTeam, postUser, patchDeactivate };

@@ -19,6 +19,7 @@ import Queue from '@/pages/Queue'
 import Register from '@/pages/Register'
 import RequestDetail from '@/pages/RequestDetail'
 import Requests from '@/pages/Requests'
+import Team from '@/pages/Team'
 
 const queryClient = new QueryClient()
 
@@ -59,6 +60,7 @@ function App() {
                     <Route path="/requests/:id" element={<RequestDetail />} />
                     <Route path="/profile" element={<Profile />} />
                     <Route path="/queue" element={<Queue />} />
+                    <Route path="/team" element={<Team />} />
                     <Route path="/admin/users" element={<AdminUsers />} />
                   </Route>
                 </Route>

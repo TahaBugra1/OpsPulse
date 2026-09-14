@@ -64,6 +64,7 @@ function sortedKeys(obj) {
 }
 
 let itAuthorityToken;
+let hrAuthorityToken;
 let adminId;
 let adminToken;
 
@@ -76,6 +77,15 @@ test.before(async () => {
     .send({ email: 'it.authority@opspulse.com', password: 'sifre1234' });
   assert.equal(itLogin.status, 200, `IT authority login failed: ${JSON.stringify(itLogin.body)}`);
   itAuthorityToken = itLogin.body.token;
+
+  // Seed DEPARTMENT_AUTHORITY in a different department (HR) - read-only,
+  // needed for the GET /api/users/team cross-department isolation tests.
+  // Logged in exactly once here, for the same rate-limit reason as above.
+  const hrLogin = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'hr.authority@opspulse.com', password: 'sifre1234' });
+  assert.equal(hrLogin.status, 200, `HR authority login failed: ${JSON.stringify(hrLogin.body)}`);
+  hrAuthorityToken = hrLogin.body.token;
 
   // Throwaway ADMIN, created directly via SQL (no API path can create one),
   // reusing the seeded IT authority's password_hash so the plaintext password
@@ -1051,4 +1061,199 @@ test('PATCH /api/users/me/department - a DEPARTMENT_AUTHORITY cannot change thei
 
   const after = await pool.query("SELECT department_id FROM users WHERE email = 'it.authority@opspulse.com'");
   assert.equal(after.rows[0].department_id, before.rows[0].department_id);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/users/team — DEPARTMENT_AUTHORITY's own-department EMPLOYEE list
+// (artifacts/department-team-view/atdd.md)
+// ---------------------------------------------------------------------------
+
+// Resolves a user's department_id directly from the DB rather than hardcoding
+// a department name/id, so fixtures below always target IT/HR's *real* ids.
+async function departmentIdOf(email) {
+  const res = await pool.query('SELECT department_id FROM users WHERE email = $1', [email]);
+  assert.ok(res.rows[0] && res.rows[0].department_id, `no department_id found for ${email}`);
+  return res.rows[0].department_id;
+}
+
+// Creates a throwaway EMPLOYEE directly in a specific department via raw SQL -
+// needed because registerEmployee() always lands in the alphabetically-first
+// active department, not necessarily IT/HR. Mirrors createDepartmentlessEmployee's
+// raw-SQL fixture style above; password_hash is borrowed from the seeded IT
+// authority purely to satisfy the password_hash-or-google_id CHECK constraint -
+// these rows are never logged into.
+async function createEmployeeInDepartment(departmentId, { isActive = true } = {}) {
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const email = validEmail();
+  const insert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id, is_active)
+     VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5, $6)
+     RETURNING id, name, surname, email, is_active, department_id`,
+    ['Team', 'Member', email, pwRow.rows[0].password_hash, departmentId, isActive]
+  );
+  return insert.rows[0];
+}
+
+// AC1: happy path - a DEPARTMENT_AUTHORITY sees an EMPLOYEE from their own
+// department, and no row anywhere in the response ever exposes
+// password_hash/google_id.
+test('GET /api/users/team - DEPARTMENT_AUTHORITY sees an EMPLOYEE from their own department', async (t) => {
+  const itDepartmentId = await departmentIdOf('it.authority@opspulse.com');
+  const employee = await createEmployeeInDepartment(itDepartmentId);
+  t.after(() => deleteUser(employee.id));
+
+  const res = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(Array.isArray(res.body));
+
+  const row = res.body.find((u) => u.id === employee.id);
+  assert.ok(row, 'the IT employee fixture must appear in the IT authority team list');
+  assert.equal(row.name, employee.name);
+  assert.equal(row.surname, employee.surname);
+  assert.equal(row.email, employee.email);
+  assert.equal(row.is_active, true);
+
+  for (const teamRow of res.body) {
+    assert.equal(teamRow.password_hash, undefined, 'password_hash must never appear in the team list');
+    assert.equal(teamRow.google_id, undefined, 'google_id must never appear in the team list');
+  }
+});
+
+// AC2 (the important one): cross-department isolation - each authority's list
+// contains only their own department's fixture employee, never the other's.
+test('GET /api/users/team - cross-department isolation: IT and HR lists never leak into each other', async (t) => {
+  const itDepartmentId = await departmentIdOf('it.authority@opspulse.com');
+  const hrDepartmentId = await departmentIdOf('hr.authority@opspulse.com');
+  assert.notEqual(itDepartmentId, hrDepartmentId, 'fixture sanity: IT and HR must be different departments');
+
+  const itEmployee = await createEmployeeInDepartment(itDepartmentId);
+  const hrEmployee = await createEmployeeInDepartment(hrDepartmentId);
+  t.after(() => deleteUser(hrEmployee.id));
+  t.after(() => deleteUser(itEmployee.id));
+
+  const itRes = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+  assert.equal(itRes.status, 200, JSON.stringify(itRes.body));
+  assert.ok(
+    itRes.body.some((u) => u.id === itEmployee.id),
+    'IT authority must see the IT employee'
+  );
+  assert.ok(
+    !itRes.body.some((u) => u.id === hrEmployee.id),
+    'IT authority must never see the HR employee'
+  );
+
+  const hrRes = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${hrAuthorityToken}`);
+  assert.equal(hrRes.status, 200, JSON.stringify(hrRes.body));
+  assert.ok(
+    hrRes.body.some((u) => u.id === hrEmployee.id),
+    'HR authority must see the HR employee'
+  );
+  assert.ok(
+    !hrRes.body.some((u) => u.id === itEmployee.id),
+    'HR authority must never see the IT employee'
+  );
+});
+
+// AC2: a client-supplied department_id query param has zero effect - the
+// endpoint is scoped exclusively by the authenticated caller's own
+// department_id, never by request input.
+test('GET /api/users/team - a department_id query parameter is ignored, scope stays the caller own department', async (t) => {
+  const itDepartmentId = await departmentIdOf('it.authority@opspulse.com');
+  const hrDepartmentId = await departmentIdOf('hr.authority@opspulse.com');
+  const hrEmployee = await createEmployeeInDepartment(hrDepartmentId);
+  t.after(() => deleteUser(hrEmployee.id));
+
+  const res = await request(app)
+    .get('/api/users/team')
+    .query({ department_id: hrDepartmentId })
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(
+    !res.body.some((u) => u.id === hrEmployee.id),
+    'a department_id query param must never widen/redirect the scope to another department'
+  );
+
+  // Every returned row genuinely belongs to IT, independently proving the
+  // param had no effect (not just that this one HR fixture was absent).
+  const rowIds = res.body.map((u) => u.id);
+  if (rowIds.length > 0) {
+    const dbCheck = await pool.query('SELECT id FROM users WHERE id = ANY($1) AND department_id = $2', [
+      rowIds,
+      itDepartmentId,
+    ]);
+    assert.equal(dbCheck.rows.length, rowIds.length, 'every returned row must really belong to IT');
+  }
+});
+
+// AC3: EMPLOYEE is forbidden - this endpoint is DEPARTMENT_AUTHORITY-only.
+test('GET /api/users/team - EMPLOYEE is forbidden (403)', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const res = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${employee.token}`);
+
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu işlem için yetkiniz yok');
+});
+
+// AC3: ADMIN is forbidden too - ADMIN already has GET /api/users for a
+// system-wide view; this endpoint has no department of its own to scope by.
+test('GET /api/users/team - ADMIN is forbidden (403)', async () => {
+  const res = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${adminToken}`);
+
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu işlem için yetkiniz yok');
+});
+
+// No token -> 401, matching this file's existing convention for other
+// /api/users routes sitting behind authMiddleware.
+test('GET /api/users/team - missing token returns 401', async () => {
+  const res = await request(app).get('/api/users/team');
+  assert.equal(res.status, 401, JSON.stringify(res.body));
+});
+
+// AC5: an inactive EMPLOYEE stays in the list, tagged is_active: false - never
+// silently filtered out.
+test('GET /api/users/team - an inactive EMPLOYEE is included, not filtered out', async (t) => {
+  const itDepartmentId = await departmentIdOf('it.authority@opspulse.com');
+  const inactiveEmployee = await createEmployeeInDepartment(itDepartmentId, { isActive: false });
+  t.after(() => deleteUser(inactiveEmployee.id));
+
+  const res = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const row = res.body.find((u) => u.id === inactiveEmployee.id);
+  assert.ok(row, 'an inactive employee must still be present in the team list');
+  assert.equal(row.is_active, false);
+});
+
+// AC1 corollary: only role EMPLOYEE is listed - a DEPARTMENT_AUTHORITY (even
+// the caller themself) never appears in their own team list.
+test('GET /api/users/team - the calling DEPARTMENT_AUTHORITY own row never appears in the list', async () => {
+  const itAuthorityRow = await pool.query("SELECT id FROM users WHERE email = 'it.authority@opspulse.com'");
+  const itAuthorityId = itAuthorityRow.rows[0].id;
+
+  const res = await request(app)
+    .get('/api/users/team')
+    .set('Authorization', `Bearer ${itAuthorityToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(
+    !res.body.some((u) => u.id === itAuthorityId),
+    'a DEPARTMENT_AUTHORITY must never see their own row (or any other non-EMPLOYEE role) in the team list'
+  );
 });

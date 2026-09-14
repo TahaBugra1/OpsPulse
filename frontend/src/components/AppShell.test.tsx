@@ -186,7 +186,7 @@ describe('AppShell', () => {
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Kuyruk', 'Talepler'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Kuyruk', 'Ekibim', 'Talepler'])
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
