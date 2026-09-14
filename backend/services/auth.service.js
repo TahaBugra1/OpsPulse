@@ -35,7 +35,7 @@ function emailDomain(email) {
   return email.slice(email.indexOf('@') + 1).toLowerCase();
 }
 
-async function register({ name, surname, email, password }) {
+async function register({ name, surname, email, password, department_id }) {
   if (!EMAIL_RE.test(email || '')) {
     fail(400, 'Geçersiz email formatı');
   }
@@ -68,15 +68,32 @@ async function register({ name, surname, email, password }) {
     fail(400, 'Soyad en fazla 150 karakter olabilir');
   }
 
+  if (!department_id) {
+    fail(400, 'Departman seçilmeli');
+  }
+
+  let dept;
+  try {
+    dept = await pool.query('SELECT id FROM departments WHERE id = $1 AND is_active = true', [department_id]);
+  } catch (dbErr) {
+    if (dbErr.code === '22P02') {
+      fail(400, 'Geçersiz departman');
+    }
+    fail(500, 'Kayıt oluşturulamadı, lütfen tekrar deneyin');
+  }
+  if (dept.rows.length === 0) {
+    fail(400, 'Geçersiz departman');
+  }
+
   const passwordHash = await bcrypt.hash(password, 10);
 
   let result;
   try {
     result = await pool.query(
-      `INSERT INTO users (name, surname, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, 'EMPLOYEE')
+      `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+       VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5)
        RETURNING id, name, surname, email, role, department_id`,
-      [normalizedName.value, normalizedSurname.value, email, passwordHash]
+      [normalizedName.value, normalizedSurname.value, email, passwordHash, department_id]
     );
   } catch (dbErr) {
     if (dbErr.code === '23505') {

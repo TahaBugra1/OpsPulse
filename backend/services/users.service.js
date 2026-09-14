@@ -15,6 +15,14 @@ const PROFILE_UPDATE = `WITH updated AS (
   FROM updated u
   LEFT JOIN departments d ON d.id = u.department_id`;
 
+const PROFILE_DEPARTMENT_UPDATE = `WITH updated AS (
+    UPDATE users SET department_id = $1 WHERE id = $2
+    RETURNING id, name, surname, email, role, department_id
+  )
+  SELECT u.id, u.name, u.surname, u.email, u.role, u.department_id, d.name AS department_name
+  FROM updated u
+  LEFT JOIN departments d ON d.id = u.department_id`;
+
 function fail(status, message) {
   const err = new Error(message);
   err.status = status;
@@ -71,6 +79,43 @@ async function updateMyProfile(body, user) {
     ]);
   } catch (dbErr) {
     fail(500, 'Profil güncellenemedi, lütfen tekrar deneyin');
+  }
+
+  return toProfile(result.rows[0]);
+}
+
+// Google-created accounts start with a NULL department; this is the one path
+// that fills it in, always scoped to the authenticated user's own id.
+// EMPLOYEE-only: for DEPARTMENT_AUTHORITY, department_id is a functional
+// authorization scope, not self-service metadata — it's set only via the
+// Admin-only user-management screen.
+async function completeDepartment(body, user) {
+  if (user.role !== 'EMPLOYEE') {
+    fail(403, 'Bu işlem için yetkiniz yok');
+  }
+
+  if (!body.department_id) {
+    fail(400, 'Departman seçilmeli');
+  }
+
+  let dept;
+  try {
+    dept = await pool.query('SELECT id FROM departments WHERE id = $1 AND is_active = true', [body.department_id]);
+  } catch (dbErr) {
+    if (dbErr.code === '22P02') {
+      fail(400, 'Geçersiz departman');
+    }
+    fail(500, 'Departman kaydedilemedi, lütfen tekrar deneyin');
+  }
+  if (dept.rows.length === 0) {
+    fail(400, 'Geçersiz departman');
+  }
+
+  let result;
+  try {
+    result = await pool.query(PROFILE_DEPARTMENT_UPDATE, [body.department_id, user.id]);
+  } catch (dbErr) {
+    fail(500, 'Departman kaydedilemedi, lütfen tekrar deneyin');
   }
 
   return toProfile(result.rows[0]);
@@ -182,4 +227,4 @@ async function deactivateUser(targetId, user) {
   return result.rows[0];
 }
 
-module.exports = { getMyProfile, updateMyProfile, listUsers, createDepartmentAuthority, deactivateUser };
+module.exports = { getMyProfile, updateMyProfile, completeDepartment, listUsers, createDepartmentAuthority, deactivateUser };

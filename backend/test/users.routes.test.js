@@ -26,14 +26,23 @@ function validEmail() {
 // Registers a fresh throwaway EMPLOYEE and returns { id, email, token }.
 async function registerEmployee() {
   const email = validEmail();
+  // Registration now requires a department_id: services/auth.service.js enforces
+  // it at the application layer (deliberately not via a DB CHECK), so a body
+  // without one is a correct 400. Resolved here rather than hardcoded so the
+  // helper never assumes a department by name.
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
   const res = await request(app).post('/api/auth/register').send({
     name: 'Test',
     surname: 'Employee',
     email,
     password: 'sifre1234test',
+    department_id: deptRes.rows[0].id,
   });
   assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token };
+  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
 }
 
 async function deleteUser(userId) {
@@ -109,8 +118,8 @@ async function postDeptAuthority(token, overrides = {}) {
 }
 
 // AC1: GET /api/users/me returns exactly the 7 profile fields for the caller.
-// department_id/department_name are null for a fresh EMPLOYEE, which is also the
-// LEFT JOIN regression guard - an INNER JOIN in PROFILE_SELECT would 404 here.
+// A self-registered EMPLOYEE now always carries the department chosen at
+// registration, so department_id/department_name are populated, not null.
 test('GET /api/users/me - returns exactly the 7 profile fields, never password_hash/google_id', async (t) => {
   const employee = await registerEmployee();
   t.after(() => deleteUser(employee.id));
@@ -127,11 +136,28 @@ test('GET /api/users/me - returns exactly the 7 profile fields, never password_h
   assert.equal(res.body.surname, 'Employee');
   assert.equal(res.body.email, employee.email);
   assert.equal(res.body.role, 'EMPLOYEE');
-  assert.equal(res.body.department_id, null);
-  assert.equal(res.body.department_name, null);
+  assert.equal(res.body.department_id, employee.department_id);
+  assert.notEqual(res.body.department_id, null);
+  assert.equal(typeof res.body.department_name, 'string');
 
   assert.equal(res.body.password_hash, undefined);
   assert.equal(res.body.google_id, undefined);
+});
+
+// AC1 (LEFT JOIN regression guard, previously covered by the fresh-EMPLOYEE
+// case above): PROFILE_SELECT must still resolve a user whose department_id is
+// NULL. An ADMIN legitimately has none, and so does a brand-new Google account
+// before it reaches the completion screen - an INNER JOIN would 404 both.
+test('GET /api/users/me - a user with a NULL department_id still resolves (LEFT JOIN, not INNER)', async () => {
+  const res = await request(app)
+    .get('/api/users/me')
+    .set('Authorization', `Bearer ${adminToken}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(sortedKeys(res.body), PROFILE_KEYS);
+  assert.equal(res.body.role, 'ADMIN');
+  assert.equal(res.body.department_id, null);
+  assert.equal(res.body.department_name, null);
 });
 
 // AC1: the LEFT JOIN actually resolves a department name for a user who has one.
@@ -242,7 +268,12 @@ test('PATCH /api/users/me - extra body fields (role, is_active, email, id) are s
   assert.equal(after.is_active, true, 'is_active must not be settable via the PATCH body');
   assert.equal(after.email, before.email, 'email must not be settable via the PATCH body');
   assert.equal(after.id, before.id);
-  assert.equal(after.department_id, null, 'department_id must not be settable via the PATCH body');
+  assert.equal(
+    after.department_id,
+    before.department_id,
+    'department_id must not be settable via the PATCH body'
+  );
+  assert.notEqual(after.department_id, null, 'fixture sanity: the attacker really has a department to overwrite');
 });
 
 // AC4: both endpoints act on req.user.id only. A body id belonging to user B is
@@ -773,4 +804,251 @@ test('POST /api/users - missing name returns 400 and creates no row', async () =
 
   const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
   assert.equal(check.rows.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/users/me/department — the forced "Departmanınızı Seçin" completion
+// step for accounts created without a department (Google OAuth still inserts
+// department_id = NULL).
+// ---------------------------------------------------------------------------
+
+// Creates an EMPLOYEE with department_id = NULL, mirroring what
+// services/auth.service.js#loginWithGoogle inserts for a first-time Google
+// user, and logs it in so the PATCH can be exercised over HTTP. Inserted via
+// SQL because no API path can create a departmentless EMPLOYEE any more.
+async function createDepartmentlessEmployee() {
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const email = validEmail();
+  const insert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, google_id, role)
+     VALUES ($1, $2, $3, $4, $5, 'EMPLOYEE') RETURNING id, department_id`,
+    ['Google', 'Employee', email, pwRow.rows[0].password_hash, `google-sub-${randomUUID()}`]
+  );
+  assert.equal(insert.rows[0].department_id, null, 'fixture must start with no department');
+
+  const login = await request(app).post('/api/auth/login').send({ email, password: 'sifre1234' });
+  assert.equal(login.status, 200, `departmentless employee login failed: ${JSON.stringify(login.body)}`);
+  return { id: insert.rows[0].id, email, token: login.body.token };
+}
+
+async function activeDepartment() {
+  const res = await pool.query('SELECT id, name FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1');
+  assert.ok(res.rows[0], 'no active department found - run `npm run seed` first');
+  return res.rows[0];
+}
+
+// AC4: choosing a valid department on the completion screen saves it and hands
+// back the normal profile shape, so the frontend can put the user back into the
+// regular app flow.
+test('PATCH /api/users/me/department - a valid active department is saved and the profile is returned', async (t) => {
+  const employee = await createDepartmentlessEmployee();
+  t.after(() => deleteUser(employee.id));
+  const department = await activeDepartment();
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ department_id: department.id });
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(sortedKeys(res.body), PROFILE_KEYS);
+  assert.equal(res.body.id, employee.id);
+  assert.equal(res.body.role, 'EMPLOYEE');
+  assert.equal(res.body.department_id, department.id);
+  assert.equal(res.body.department_name, department.name);
+  assert.equal(res.body.password_hash, undefined);
+
+  // Really persisted, not just projected.
+  const row = await readUserRow(employee.id);
+  assert.equal(row.department_id, department.id);
+  assert.equal(row.role, 'EMPLOYEE', 'completing a department must never change the role');
+});
+
+// AC4 / AC5: the endpoint sits behind authMiddleware - no token, no completion.
+test('PATCH /api/users/me/department - requires authentication (401 without a token)', async () => {
+  const department = await activeDepartment();
+
+  const noHeader = await request(app)
+    .patch('/api/users/me/department')
+    .send({ department_id: department.id });
+  assert.equal(noHeader.status, 401, JSON.stringify(noHeader.body));
+
+  const badScheme = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', 'Basic not-a-bearer-token')
+    .send({ department_id: department.id });
+  assert.equal(badScheme.status, 401, JSON.stringify(badScheme.body));
+
+  const garbageToken = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', 'Bearer not-a-real-jwt')
+    .send({ department_id: department.id });
+  assert.equal(garbageToken.status, 401, JSON.stringify(garbageToken.body));
+});
+
+// Security boundary: completeDepartment() always writes WHERE id = user.id from
+// the token. A body carrying another user's id must not touch that user.
+test('PATCH /api/users/me/department - only ever updates the caller own row, never a body-supplied id', async (t) => {
+  const attacker = await createDepartmentlessEmployee();
+  const victim = await createDepartmentlessEmployee();
+  t.after(() => deleteUser(victim.id));
+  t.after(() => deleteUser(attacker.id));
+
+  const victimBefore = await readUserRow(victim.id);
+  const department = await activeDepartment();
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${attacker.token}`)
+    .send({ department_id: department.id, id: victim.id, user_id: victim.id });
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.id, attacker.id);
+
+  const attackerAfter = await readUserRow(attacker.id);
+  assert.equal(attackerAfter.department_id, department.id);
+
+  const victimAfter = await readUserRow(victim.id);
+  assert.deepEqual(victimAfter, victimBefore, "the victim's row must be completely untouched");
+  assert.equal(victimAfter.department_id, null);
+});
+
+// AC6 / edge case: missing department_id -> the exact controlled 400, never a 500.
+test('PATCH /api/users/me/department - missing department_id returns 400 and writes nothing', async (t) => {
+  const employee = await createDepartmentlessEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const invalidBodies = [{}, { department_id: '' }, { department_id: null }];
+
+  for (const body of invalidBodies) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await request(app)
+      .patch('/api/users/me/department')
+      .set('Authorization', `Bearer ${employee.token}`)
+      .send(body);
+
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.status, 'error');
+    assert.equal(res.body.message, 'Departman seçilmeli');
+
+    // eslint-disable-next-line no-await-in-loop
+    const row = await readUserRow(employee.id);
+    assert.equal(row.department_id, null, 'a rejected completion must not write anything');
+  }
+});
+
+// Edge case: well-formed but unknown UUID -> 400, not 500, and nothing written.
+test('PATCH /api/users/me/department - nonexistent department_id returns 400 and writes nothing', async (t) => {
+  const employee = await createDepartmentlessEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ department_id: randomUUID() });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Geçersiz departman');
+
+  const row = await readUserRow(employee.id);
+  assert.equal(row.department_id, null);
+});
+
+// AC6 / edge case: an inactive department is not selectable - the completion
+// screen only ever lists active ones, and the backend independently enforces it.
+test('PATCH /api/users/me/department - inactive department_id returns 400 and writes nothing', async (t) => {
+  const employee = await createDepartmentlessEmployee();
+  const inactiveDept = await pool.query(
+    `INSERT INTO departments (name, is_active) VALUES ($1, false) RETURNING id`,
+    [`Throwaway Inactive Dept ${randomUUID()}`]
+  );
+  const inactiveDeptId = inactiveDept.rows[0].id;
+  t.after(async () => {
+    await pool.query('DELETE FROM departments WHERE id = $1', [inactiveDeptId]);
+  });
+  t.after(() => deleteUser(employee.id));
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ department_id: inactiveDeptId });
+
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Geçersiz departman');
+
+  const row = await readUserRow(employee.id);
+  assert.equal(row.department_id, null);
+});
+
+// AC6 / edge case: a malformed non-UUID must be caught as Postgres error 22P02
+// and translated to a clean 400 - a raw invalid-input-syntax 500 is a bug.
+test('PATCH /api/users/me/department - malformed non-UUID department_id returns 400, never 500', async (t) => {
+  const employee = await createDepartmentlessEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  for (const malformed of ['abc', 'not-a-uuid', '123', "' OR 1=1 --"]) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await request(app)
+      .patch('/api/users/me/department')
+      .set('Authorization', `Bearer ${employee.token}`)
+      .send({ department_id: malformed });
+
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(malformed)}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, 'Geçersiz departman');
+
+    // eslint-disable-next-line no-await-in-loop
+    const row = await readUserRow(employee.id);
+    assert.equal(row.department_id, null);
+  }
+});
+
+// AC5: a user who already has a department can still call the endpoint (it is
+// not the security boundary), but the completion screen is never forced on them -
+// that is ProtectedRoute's job. What matters here is that the role/scope of an
+// already-complete user is untouched by the call.
+test('PATCH /api/users/me/department - an already-complete EMPLOYEE can change department without a role change', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const other = await pool.query(
+    'SELECT id, name FROM departments WHERE is_active = true AND id <> $1 ORDER BY name ASC LIMIT 1',
+    [employee.department_id]
+  );
+  assert.ok(other.rows[0], 'need a second active department - run `npm run seed` first');
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ department_id: other.rows[0].id });
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.department_id, other.rows[0].id);
+  assert.equal(res.body.department_name, other.rows[0].name);
+  assert.equal(res.body.role, 'EMPLOYEE');
+
+  const row = await readUserRow(employee.id);
+  assert.equal(row.role, 'EMPLOYEE');
+  assert.equal(row.department_id, other.rows[0].id);
+});
+
+// Security: department_id is functional authorization scope for a
+// DEPARTMENT_AUTHORITY (it drives claim-eligibility), not self-service
+// metadata like it is for EMPLOYEE. Only ADMIN's user-management screen may
+// set it. Reuses the module-scoped itAuthorityToken (never logs in again -
+// see test.before's rate-limit note).
+test('PATCH /api/users/me/department - a DEPARTMENT_AUTHORITY cannot change their own department', async () => {
+  const department = await activeDepartment();
+
+  const before = await pool.query("SELECT department_id FROM users WHERE email = 'it.authority@opspulse.com'");
+
+  const res = await request(app)
+    .patch('/api/users/me/department')
+    .set('Authorization', `Bearer ${itAuthorityToken}`)
+    .send({ department_id: department.id });
+
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu işlem için yetkiniz yok');
+
+  const after = await pool.query("SELECT department_id FROM users WHERE email = 'it.authority@opspulse.com'");
+  assert.equal(after.rows[0].department_id, before.rows[0].department_id);
 });

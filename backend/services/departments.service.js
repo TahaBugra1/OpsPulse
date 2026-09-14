@@ -19,4 +19,16 @@ async function listDepartments(user) {
   return result.rows;
 }
 
-module.exports = { listDepartments };
+// Unauthenticated counterpart of listDepartments: the public register form
+// needs the department list before any account or token exists.
+async function listActiveDepartments() {
+  let result;
+  try {
+    result = await pool.query('SELECT id, name FROM departments WHERE is_active = true ORDER BY name ASC');
+  } catch (dbErr) {
+    fail(500, 'Departmanlar getirilemedi, lütfen tekrar deneyin');
+  }
+  return result.rows;
+}
+
+module.exports = { listDepartments, listActiveDepartments };

@@ -7,6 +7,23 @@ export const loginSchema = z.object({
 
 export type LoginFormValues = z.infer<typeof loginSchema>
 
+// Self-registration never carries a role — the backend hardcodes EMPLOYEE.
+export const registerSchema = z.object({
+  name: z.string().trim().min(1, 'Ad zorunlu').max(150, 'Ad en fazla 150 karakter olabilir'),
+  surname: z.string().trim().max(150, 'Soyad en fazla 150 karakter olabilir'),
+  email: z.string().email('Geçerli bir email adresi girin'),
+  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  department_id: z.string().min(1, 'Departman seçilmeli'),
+})
+
+export type RegisterFormValues = z.infer<typeof registerSchema>
+
+export const completeProfileSchema = z.object({
+  department_id: z.string().min(1, 'Departman seçilmeli'),
+})
+
+export type CompleteProfileFormValues = z.infer<typeof completeProfileSchema>
+
 export const profileSchema = z.object({
   name: z.string().trim().min(1, 'Ad zorunlu').max(150, 'Ad en fazla 150 karakter olabilir'),
   surname: z.string().trim().max(150, 'Soyad en fazla 150 karakter olabilir'),

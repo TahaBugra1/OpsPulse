@@ -223,3 +223,69 @@ test('loginWithGoogle - result.user never includes password_hash, for new user a
   const linked = await loginWithGoogle({ id_token: 'fake' }, fakeVerifyFor(claims));
   assert.equal(linked.user.password_hash, undefined);
 });
+
+// AC3 (backend half): loginWithGoogle is deliberately UNCHANGED by the
+// mandatory-department work - its INSERT still omits department_id, so a
+// first-time Google user is created with department_id = null. That null is
+// exactly what the frontend keys the forced "Departmanınızı Seçin" completion
+// screen off, so it must stay null rather than being defaulted server-side.
+test('loginWithGoogle - a first-time Google user is created with department_id null', async (t) => {
+  const email = allowedEmail();
+  t.after(() => deleteUserByEmail(email));
+
+  const claims = {
+    email,
+    given_name: 'Brand',
+    family_name: 'New',
+    sub: `google-sub-${randomUUID()}`,
+  };
+
+  const result = await loginWithGoogle({ id_token: 'fake' }, fakeVerifyFor(claims));
+
+  assert.equal(result.user.department_id, null);
+  assert.equal(result.user.role, 'EMPLOYEE');
+
+  const dbRow = await pool.query(
+    'SELECT department_id, role FROM users WHERE email = $1',
+    [email]
+  );
+  assert.equal(dbRow.rows.length, 1);
+  assert.equal(dbRow.rows[0].department_id, null, 'Google sign-up must not invent a department');
+  assert.equal(dbRow.rows[0].role, 'EMPLOYEE');
+
+  // The JWT carries the same null, so nothing downstream can mistake the user
+  // for someone who already completed their profile.
+  const payload = jwt.decode(result.token);
+  assert.equal(payload.department_id, null);
+});
+
+// AC4 (backend half, seen from the Google path): once the completion screen has
+// saved a department, a repeat Google login must return that department rather
+// than resetting it to null.
+test('loginWithGoogle - a Google user who already completed their department keeps it on the next login', async (t) => {
+  const email = allowedEmail();
+  t.after(() => deleteUserByEmail(email));
+
+  const claims = {
+    email,
+    given_name: 'Completed',
+    family_name: 'User',
+    sub: `google-sub-${randomUUID()}`,
+  };
+
+  const created = await loginWithGoogle({ id_token: 'fake' }, fakeVerifyFor(claims));
+  assert.equal(created.user.department_id, null);
+
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
+  const departmentId = deptRes.rows[0].id;
+  await pool.query('UPDATE users SET department_id = $1 WHERE id = $2', [departmentId, created.user.id]);
+
+  const second = await loginWithGoogle({ id_token: 'fake' }, fakeVerifyFor(claims));
+
+  assert.equal(second.user.id, created.user.id);
+  assert.equal(second.user.department_id, departmentId);
+  assert.equal(jwt.decode(second.token).department_id, departmentId);
+});

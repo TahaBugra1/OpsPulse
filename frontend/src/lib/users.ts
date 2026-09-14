@@ -31,6 +31,13 @@ export function useUpdateProfile() {
   })
 }
 
+export function useCompleteDepartment() {
+  return useMutation({
+    mutationFn: (body: { department_id: string }) =>
+      apiPatch<UserProfile>('/api/users/me/department', body),
+  })
+}
+
 export interface AdminUserListItem {
   id: string
   name: string

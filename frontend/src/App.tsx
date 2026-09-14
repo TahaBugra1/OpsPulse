@@ -4,17 +4,19 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
-import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
+import { GuestOnlyRoute, IncompleteProfileRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
 import AdminUsers from '@/pages/AdminUsers'
 import Analytics from '@/pages/Analytics'
+import CompleteProfile from '@/pages/CompleteProfile'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
 import NotFound from '@/pages/NotFound'
 import Profile from '@/pages/Profile'
 import Queue from '@/pages/Queue'
+import Register from '@/pages/Register'
 import RequestDetail from '@/pages/RequestDetail'
 import Requests from '@/pages/Requests'
 
@@ -60,8 +62,15 @@ function App() {
                     <Route path="/admin/users" element={<AdminUsers />} />
                   </Route>
                 </Route>
+                {/* Deliberately OUTSIDE ProtectedRoute: ProtectedRoute is what
+                    redirects here, so nesting it there would loop forever.
+                    IncompleteProfileRoute does its own unauthenticated check. */}
+                <Route element={<IncompleteProfileRoute />}>
+                  <Route path="/complete-profile" element={<CompleteProfile />} />
+                </Route>
                 <Route element={<GuestOnlyRoute />}>
                   <Route path="/login" element={<Login />} />
+                  <Route path="/register" element={<Register />} />
                 </Route>
                 <Route path="*" element={<NotFound />} />
               </Routes>
