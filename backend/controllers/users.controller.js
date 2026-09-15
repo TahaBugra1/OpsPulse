@@ -1,4 +1,14 @@
-const { getMyProfile, updateMyProfile, completeDepartment, listUsers, listMyTeam, createDepartmentAuthority, deactivateUser } = require('../services/users.service');
+const {
+  getMyProfile,
+  updateMyProfile,
+  completeDepartment,
+  changeMyPassword,
+  listUsers,
+  listMyTeam,
+  createUser,
+  resetUserPassword,
+  deactivateUser,
+} = require('../services/users.service');
 
 async function getMe(req, res) {
   try {
@@ -27,6 +37,15 @@ async function patchDepartment(req, res) {
   }
 }
 
+async function patchMyPassword(req, res) {
+  try {
+    const result = await changeMyPassword(req.body, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Şifre değiştirilemedi, lütfen tekrar deneyin' });
+  }
+}
+
 async function getUsers(req, res) {
   try {
     const result = await listUsers(req.user);
@@ -47,10 +66,19 @@ async function getMyTeam(req, res) {
 
 async function postUser(req, res) {
   try {
-    const result = await createDepartmentAuthority(req.body, req.user);
+    const result = await createUser(req.body, req.user);
     res.status(201).json(result);
   } catch (err) {
     res.status(err.status || 500).json({ status: 'error', message: err.message || 'Kullanıcı oluşturulamadı, lütfen tekrar deneyin' });
+  }
+}
+
+async function postResetPassword(req, res) {
+  try {
+    const result = await resetUserPassword(req.params.id, req.user);
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Şifre sıfırlanamadı, lütfen tekrar deneyin' });
   }
 }
 
@@ -63,4 +91,14 @@ async function patchDeactivate(req, res) {
   }
 }
 
-module.exports = { getMe, patchMe, patchDepartment, getUsers, getMyTeam, postUser, patchDeactivate };
+module.exports = {
+  getMe,
+  patchMe,
+  patchDepartment,
+  patchMyPassword,
+  getUsers,
+  getMyTeam,
+  postUser,
+  postResetPassword,
+  patchDeactivate,
+};

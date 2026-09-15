@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminUsers from './AdminUsers'
+import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/context/AuthContext'
 import type { AuthUser } from '@/lib/authStorage'
 import type { Department } from '@/lib/departments'
@@ -54,10 +56,13 @@ function makeUserRow(overrides: Partial<AdminUserListItem> = {}): AdminUserListI
     department_name: null,
     is_active: true,
     created_at: '2026-01-01T00:00:00.000Z',
+    has_password: true,
     ...overrides,
   }
 }
 
+// A <Toaster /> is mounted (as in Profile.test.tsx) so toast text can be asserted
+// from the DOM; the page itself only calls sonner's toast().
 function renderAdminUsers(user: AuthUser = adminUser) {
   seedSession(user)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -67,9 +72,23 @@ function renderAdminUsers(user: AuthUser = adminUser) {
         <MemoryRouter initialEntries={['/admin/users']}>
           <AdminUsers />
         </MemoryRouter>
+        <Toaster />
       </AuthProvider>
     </QueryClientProvider>,
   )
+}
+
+const TEMP_PASSWORD = 'AbCdEfGh2345'
+
+async function fillCreateForm(
+  user: ReturnType<typeof userEvent.setup>,
+  values: { name?: string; surname?: string; email?: string; role?: string; department?: string },
+) {
+  if (values.name) await user.type(screen.getByLabelText('Ad'), values.name)
+  if (values.surname) await user.type(screen.getByLabelText('Soyad'), values.surname)
+  if (values.email) await user.type(screen.getByLabelText('Email'), values.email)
+  if (values.role) await user.selectOptions(screen.getByLabelText('Rol'), values.role)
+  if (values.department) await user.selectOptions(screen.getByLabelText('Departman'), values.department)
 }
 
 describe('AdminUsers page', () => {
@@ -77,11 +96,14 @@ describe('AdminUsers page', () => {
     sessionStorage.clear()
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn())
+    // sonner's toast queue is module-level and outlives an unmount.
+    toast.dismiss()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+    toast.dismiss()
   })
 
   // Page fetches GET /api/departments then GET /api/users on mount; the
@@ -105,9 +127,11 @@ describe('AdminUsers page', () => {
     expect(String(secondUrl)).toContain('/api/users')
     expect(secondOptions?.method).toBe('GET')
 
-    expect(screen.getByRole('option', { name: 'HR' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'IT' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Seçiniz' })).toBeInTheDocument()
+    // The Rol select has its own "Seçiniz" placeholder too, so scope to Departman.
+    const departmentSelect = screen.getByLabelText('Departman')
+    expect(within(departmentSelect).getByRole('option', { name: 'HR' })).toBeInTheDocument()
+    expect(within(departmentSelect).getByRole('option', { name: 'IT' })).toBeInTheDocument()
+    expect(within(departmentSelect).getByRole('option', { name: 'Seçiniz' })).toBeInTheDocument()
 
     expect(await screen.findByText('Taha Bugra')).toBeInTheDocument()
   })
@@ -135,11 +159,13 @@ describe('AdminUsers page', () => {
 
     await screen.findByLabelText('Departman')
 
-    await user.type(screen.getByLabelText('Ad'), 'Yeni')
-    await user.type(screen.getByLabelText('Soyad'), 'Yetkili')
-    await user.type(screen.getByLabelText('Email'), 'yeni.yetkili@example.com')
-    await user.type(screen.getByLabelText('Şifre'), 'sifre1234')
-    await user.selectOptions(screen.getByLabelText('Departman'), 'dept-2')
+    await fillCreateForm(user, {
+      name: 'Yeni',
+      surname: 'Yetkili',
+      email: 'yeni.yetkili@example.com',
+      role: 'DEPARTMENT_AUTHORITY',
+      department: 'dept-2',
+    })
 
     const createdRow = makeUserRow({
       id: 'user-2',
@@ -150,7 +176,17 @@ describe('AdminUsers page', () => {
       department_id: 'dept-2',
       department_name: 'IT',
     })
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(201, createdRow))
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(201, {
+        id: 'user-2',
+        name: 'Yeni',
+        surname: 'Yetkili',
+        email: 'yeni.yetkili@example.com',
+        role: 'DEPARTMENT_AUTHORITY',
+        department_id: 'dept-2',
+        temporary_password: TEMP_PASSWORD,
+      }),
+    )
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [createdRow]))
 
     await user.click(screen.getByRole('button', { name: 'Oluştur' }))
@@ -163,7 +199,7 @@ describe('AdminUsers page', () => {
       name: 'Yeni',
       surname: 'Yetkili',
       email: 'yeni.yetkili@example.com',
-      password: 'sifre1234',
+      role: 'DEPARTMENT_AUTHORITY',
       department_id: 'dept-2',
     })
 
@@ -176,7 +212,7 @@ describe('AdminUsers page', () => {
     await waitFor(() => expect(screen.getByLabelText('Ad')).toHaveValue(''))
     expect(screen.getByLabelText('Soyad')).toHaveValue('')
     expect(screen.getByLabelText('Email')).toHaveValue('')
-    expect(screen.getByLabelText('Şifre')).toHaveValue('')
+    expect(screen.getByLabelText('Rol')).toHaveValue('')
     expect(screen.getByLabelText('Departman')).toHaveValue('')
   })
 
@@ -191,11 +227,13 @@ describe('AdminUsers page', () => {
 
     await screen.findByLabelText('Departman')
 
-    await user.type(screen.getByLabelText('Ad'), 'Yeni')
-    await user.type(screen.getByLabelText('Soyad'), 'Yetkili')
-    await user.type(screen.getByLabelText('Email'), 'dup@example.com')
-    await user.type(screen.getByLabelText('Şifre'), 'sifre1234')
-    await user.selectOptions(screen.getByLabelText('Departman'), 'dept-1')
+    await fillCreateForm(user, {
+      name: 'Yeni',
+      surname: 'Yetkili',
+      email: 'dup@example.com',
+      role: 'EMPLOYEE',
+      department: 'dept-1',
+    })
 
     vi.mocked(fetch).mockResolvedValueOnce(errorResponse(409, 'Bu email zaten kayıtlı'))
 
@@ -218,10 +256,12 @@ describe('AdminUsers page', () => {
 
     await screen.findByLabelText('Departman')
 
-    await user.type(screen.getByLabelText('Soyad'), 'Yetkili')
-    await user.type(screen.getByLabelText('Email'), 'yeni@example.com')
-    await user.type(screen.getByLabelText('Şifre'), 'sifre1234')
-    await user.selectOptions(screen.getByLabelText('Departman'), 'dept-1')
+    await fillCreateForm(user, {
+      surname: 'Yetkili',
+      email: 'yeni@example.com',
+      role: 'EMPLOYEE',
+      department: 'dept-1',
+    })
 
     await user.click(screen.getByRole('button', { name: 'Oluştur' }))
 
@@ -229,8 +269,9 @@ describe('AdminUsers page', () => {
     expect(fetch).toHaveBeenCalledTimes(2) // only the initial GET departments + GET users
   })
 
-  // Client-side zod validation: a password under 8 characters blocks submission.
-  it('shows a field-level error for a short password and does not call POST /api/users', async () => {
+  // Client-side zod validation: no role chosen blocks submission (the backend
+  // would reject it too, but the form never sends it).
+  it('shows a field-level error when no role is chosen and does not call POST /api/users', async () => {
     const user = userEvent.setup()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
@@ -239,16 +280,178 @@ describe('AdminUsers page', () => {
 
     await screen.findByLabelText('Departman')
 
-    await user.type(screen.getByLabelText('Ad'), 'Yeni')
-    await user.type(screen.getByLabelText('Soyad'), 'Yetkili')
-    await user.type(screen.getByLabelText('Email'), 'yeni@example.com')
-    await user.type(screen.getByLabelText('Şifre'), 'short1')
-    await user.selectOptions(screen.getByLabelText('Departman'), 'dept-1')
+    await fillCreateForm(user, {
+      name: 'Yeni',
+      surname: 'Yetkili',
+      email: 'yeni@example.com',
+      department: 'dept-1',
+    })
 
     await user.click(screen.getByRole('button', { name: 'Oluştur' }))
 
-    expect(await screen.findByText('Şifre en az 8 karakter olmalı')).toBeInTheDocument()
+    expect(await screen.findByText('Rol seçilmeli')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  // AC1 / AC2 (frontend half): the admin picks between exactly the two
+  // provisionable roles and never types a password.
+  it('offers exactly Seçiniz / Çalışan / Departman Yetkilisi as roles and has no password input', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    const { container } = renderAdminUsers()
+
+    const roleSelect = await screen.findByLabelText('Rol')
+    const options = within(roleSelect).getAllByRole('option') as HTMLOptionElement[]
+    expect(options.map((o) => o.textContent)).toEqual(['Seçiniz', 'Çalışan', 'Departman Yetkilisi'])
+    expect(options.map((o) => o.value)).toEqual(['', 'EMPLOYEE', 'DEPARTMENT_AUTHORITY'])
+
+    expect(screen.getByText('Yeni Kullanıcı')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Şifre')).not.toBeInTheDocument()
+    expect(container.querySelector('input[type="password"]')).toBeNull()
+  })
+
+  // AC1: a successful create shows the one-time temporary password in a dialog;
+  // "Tamam" closes it and the password is gone from the page.
+  it('shows the returned temporary password in a dialog after create, and Tamam removes it', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, []))
+
+    renderAdminUsers()
+
+    await screen.findByLabelText('Departman')
+    await fillCreateForm(user, {
+      name: 'Yeni',
+      surname: 'Calisan',
+      email: 'yeni.calisan@example.com',
+      role: 'EMPLOYEE',
+      department: 'dept-1',
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(201, {
+        id: 'user-3',
+        name: 'Yeni',
+        surname: 'Calisan',
+        email: 'yeni.calisan@example.com',
+        role: 'EMPLOYEE',
+        department_id: 'dept-1',
+        temporary_password: TEMP_PASSWORD,
+      }),
+    )
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeUserRow({ id: 'user-3' })]))
+
+    await user.click(screen.getByRole('button', { name: 'Oluştur' }))
+
+    const dialog = await screen.findByRole('dialog')
+    const postBody = JSON.parse(vi.mocked(fetch).mock.calls[2][1]?.body as string)
+    expect(postBody).toMatchObject({ role: 'EMPLOYEE' })
+    expect(postBody).not.toHaveProperty('password')
+
+    expect(within(dialog).getByText('Geçici Şifre')).toBeInTheDocument()
+    expect(
+      within(dialog).getByText(
+        'Bu şifre bir daha gösterilmeyecek. Kullanıcıya iletin; ilk girişinde şifresini değiştirmesi istenecek.',
+      ),
+    ).toBeInTheDocument()
+    const code = within(dialog).getByText(TEMP_PASSWORD)
+    expect(code.tagName).toBe('CODE')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Tamam' }))
+
+    await waitFor(() => expect(screen.queryByText(TEMP_PASSWORD)).not.toBeInTheDocument())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // AC1: "Kopyala" copies the password to the clipboard and confirms with a toast.
+  it('copies the temporary password with Kopyala and shows "Şifre kopyalandı"', async () => {
+    const user = userEvent.setup()
+    // Spy AFTER userEvent.setup(): it installs its own clipboard stub on navigator.
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeUserRow({ id: 'user-1', name: 'Taha', surname: 'Bugra' })]))
+
+    renderAdminUsers()
+
+    const row = (await screen.findByText('Taha Bugra')).closest('tr') as HTMLElement
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, { temporary_password: TEMP_PASSWORD }))
+    await user.click(within(row).getByRole('button', { name: 'Şifre Sıfırla' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Kopyala' }))
+
+    expect(writeText).toHaveBeenCalledWith(TEMP_PASSWORD)
+    expect(await screen.findByText('Şifre kopyalandı')).toBeInTheDocument()
+  })
+
+  // AC5 / AC6 (frontend half): "Şifre Sıfırla" appears only for an active,
+  // non-ADMIN, password-holding user other than the current admin.
+  it('renders "Şifre Sıfırla" only for active non-ADMIN users with a password who are not the current user', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(200, [
+        makeUserRow({ id: 'user-emp', name: 'Emp', surname: 'Active', role: 'EMPLOYEE' }),
+        makeUserRow({ id: 'user-da', name: 'Da', surname: 'Active', role: 'DEPARTMENT_AUTHORITY' }),
+        makeUserRow({ id: 'admin-2', name: 'Other', surname: 'Admin', role: 'ADMIN' }),
+        // The current user's own row. Its role is deliberately NOT ADMIN, so only
+        // the "not the current user" condition can be what hides the button.
+        makeUserRow({ id: adminUser.id, name: 'Self', surname: 'Row', role: 'EMPLOYEE' }),
+        makeUserRow({ id: 'user-inactive', name: 'Inactive', surname: 'User', is_active: false }),
+        makeUserRow({ id: 'user-google', name: 'Google', surname: 'Only', has_password: false }),
+      ]),
+    )
+
+    renderAdminUsers()
+
+    const rowOf = async (text: string) => (await screen.findByText(text)).closest('tr') as HTMLElement
+    const resetIn = async (text: string) => within(await rowOf(text)).queryByRole('button', { name: 'Şifre Sıfırla' })
+
+    expect(await resetIn('Emp Active')).toBeInTheDocument()
+    expect(await resetIn('Da Active')).toBeInTheDocument()
+    expect(await resetIn('Other Admin')).not.toBeInTheDocument()
+    expect(await resetIn('Self Row')).not.toBeInTheDocument()
+    expect(await resetIn('Inactive User')).not.toBeInTheDocument()
+    expect(await resetIn('Google Only')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Şifre Sıfırla' })).toHaveLength(2)
+  })
+
+  // AC6: clicking "Şifre Sıfırla" POSTs the reset and shows the new temp password.
+  it('POSTs /api/users/:id/reset-password on "Şifre Sıfırla" and opens the dialog with the returned password', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeUserRow({ id: 'user-1', name: 'Taha', surname: 'Bugra' })]))
+
+    renderAdminUsers()
+
+    const row = (await screen.findByText('Taha Bugra')).closest('tr') as HTMLElement
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, { temporary_password: 'ZyXwVuTs9876' }))
+    await user.click(within(row).getByRole('button', { name: 'Şifre Sıfırla' }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+    const [resetUrl, resetOptions] = vi.mocked(fetch).mock.calls[2]
+    expect(String(resetUrl)).toMatch(/\/api\/users\/user-1\/reset-password$/)
+    expect(resetOptions?.method).toBe('POST')
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Geçici Şifre')).toBeInTheDocument()
+    expect(within(dialog).getByText('ZyXwVuTs9876').tagName).toBe('CODE')
+  })
+
+  // A failed reset surfaces the backend's message as a toast and opens no dialog.
+  it('shows the backend error message as a toast when a reset fails', async () => {
+    const user = userEvent.setup()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, fakeDepartments))
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeUserRow({ id: 'user-1', name: 'Taha', surname: 'Bugra' })]))
+
+    renderAdminUsers()
+
+    const row = (await screen.findByText('Taha Bugra')).closest('tr') as HTMLElement
+    vi.mocked(fetch).mockResolvedValueOnce(errorResponse(400, 'Pasif kullanıcının şifresi sıfırlanamaz'))
+    await user.click(within(row).getByRole('button', { name: 'Şifre Sıfırla' }))
+
+    expect(await screen.findByText('Pasif kullanıcının şifresi sıfırlanamaz')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   // "Pasife Al" is not rendered for the currently logged-in ADMIN's own row,

@@ -289,3 +289,38 @@ test('loginWithGoogle - a Google user who already completed their department kee
   assert.equal(second.user.department_id, departmentId);
   assert.equal(jwt.decode(second.token).department_id, departmentId);
 });
+
+// AC11: Google login does not bypass the forced password change. An existing
+// password account that is flagged (admin-provisioned or reset) and then signs
+// in with Google still gets must_change_password: true, so the frontend
+// diverts it and the backend keeps blocking it.
+test('loginWithGoogle - an existing flagged password account signing in with Google still has must_change_password true', async (t) => {
+  const email = allowedEmail();
+  t.after(() => deleteUserByEmail(email));
+
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
+
+  await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id, must_change_password)
+     VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5, true)`,
+    ['Flagged', 'Google', email, 'dummy-hash', deptRes.rows[0].id]
+  );
+
+  const claims = {
+    email,
+    given_name: 'Flagged',
+    family_name: 'Google',
+    sub: `google-sub-${randomUUID()}`,
+  };
+
+  const result = await loginWithGoogle({ id_token: 'fake' }, fakeVerifyFor(claims));
+
+  assert.equal(result.user.must_change_password, true);
+
+  const dbRow = await pool.query('SELECT must_change_password, google_id FROM users WHERE email = $1', [email]);
+  assert.equal(dbRow.rows[0].must_change_password, true, 'linking Google must not clear the flag');
+  assert.equal(dbRow.rows[0].google_id, claims.sub);
+});

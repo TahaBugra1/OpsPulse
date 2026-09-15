@@ -44,6 +44,7 @@ const completedProfile: UserProfile = {
   role: 'EMPLOYEE',
   department_id: 'dept-it',
   department_name: 'IT',
+  has_password: false,
 }
 
 type Responder = () => Response | Promise<Response>

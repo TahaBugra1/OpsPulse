@@ -4,12 +4,13 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
-import { GuestOnlyRoute, IncompleteProfileRoute, ProtectedRoute } from '@/components/ProtectedRoute'
+import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
 import AdminUsers from '@/pages/AdminUsers'
 import Analytics from '@/pages/Analytics'
+import ChangePassword from '@/pages/ChangePassword'
 import CompleteProfile from '@/pages/CompleteProfile'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
@@ -69,6 +70,10 @@ function App() {
                     IncompleteProfileRoute does its own unauthenticated check. */}
                 <Route element={<IncompleteProfileRoute />}>
                   <Route path="/complete-profile" element={<CompleteProfile />} />
+                </Route>
+                {/* Also OUTSIDE ProtectedRoute for the same reason: ProtectedRoute redirects here. */}
+                <Route element={<PasswordChangeRoute />}>
+                  <Route path="/change-password" element={<ChangePassword />} />
                 </Route>
                 <Route element={<GuestOnlyRoute />}>
                   <Route path="/login" element={<Login />} />

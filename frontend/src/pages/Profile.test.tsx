@@ -43,6 +43,7 @@ function makeProfile(overrides: Partial<UserProfile> = {}): UserProfile {
     role: 'EMPLOYEE',
     department_id: null,
     department_name: null,
+    has_password: true,
     ...overrides,
   }
 }
@@ -293,5 +294,121 @@ describe('Profile page', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
     const [, options] = vi.mocked(fetch).mock.calls[1]
     expect(JSON.parse(options?.body as string)).toEqual({ name: 'Taha', surname: null })
+  })
+
+  describe('Şifre Değiştir card', () => {
+    async function fillPasswordForm(
+      user: ReturnType<typeof userEvent.setup>,
+      values: { current: string; next: string; confirm: string },
+    ) {
+      await user.type(screen.getByLabelText('Mevcut Şifre'), values.current)
+      await user.type(screen.getByLabelText('Yeni Şifre'), values.next)
+      await user.type(screen.getByLabelText('Yeni Şifre (Tekrar)'), values.confirm)
+    }
+
+    // AC9: a Google-only account has no password to change - the card is not rendered at all
+    it('does not render the password card when the profile has no password', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile({ has_password: false })))
+
+      renderProfile()
+
+      await screen.findByLabelText('Ad')
+      expect(screen.queryByText('Şifre Değiştir')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Mevcut Şifre')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Şifreyi Değiştir' })).not.toBeInTheDocument()
+    })
+
+    // AC9: the card renders for an account that has a password
+    it('renders the password card with its three fields when the profile has a password', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile({ has_password: true })))
+
+      renderProfile()
+
+      expect(await screen.findByText('Şifre Değiştir')).toBeInTheDocument()
+      expect(screen.getByLabelText('Mevcut Şifre')).toHaveAttribute('type', 'password')
+      expect(screen.getByLabelText('Yeni Şifre')).toHaveAttribute('type', 'password')
+      expect(screen.getByLabelText('Yeni Şifre (Tekrar)')).toHaveAttribute('type', 'password')
+      expect(screen.getByRole('button', { name: 'Şifreyi Değiştir' })).toBeInTheDocument()
+    })
+
+    // AC7 (client side): a mismatched confirmation never reaches the backend
+    it('shows "Şifreler eşleşmiyor" for a mismatched confirmation and sends no PATCH', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile()))
+
+      renderProfile()
+
+      await screen.findByLabelText('Mevcut Şifre')
+      await fillPasswordForm(user, { current: 'EskiSifre123', next: 'YeniSifre123', confirm: 'Farkli12345' })
+      await user.click(screen.getByRole('button', { name: 'Şifreyi Değiştir' }))
+
+      expect(await screen.findByText('Şifreler eşleşmiyor')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledTimes(1) // only the initial GET
+    })
+
+    // AC9: a successful change PATCHes only current/new, toasts, and clears the form
+    it('PATCHes exactly current_password and new_password, shows a toast and clears the fields on success', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile()))
+
+      renderProfile()
+
+      await screen.findByLabelText('Mevcut Şifre')
+      await fillPasswordForm(user, { current: 'EskiSifre123', next: 'YeniSifre123', confirm: 'YeniSifre123' })
+
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse(200, { ...fakeUser, department_id: null, must_change_password: false }),
+      )
+      await user.click(screen.getByRole('button', { name: 'Şifreyi Değiştir' }))
+
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+      const [url, options] = vi.mocked(fetch).mock.calls[1]
+      expect(String(url)).toMatch(/\/api\/users\/me\/password$/)
+      expect(options?.method).toBe('PATCH')
+      expect(JSON.parse(options?.body as string)).toEqual({
+        current_password: 'EskiSifre123',
+        new_password: 'YeniSifre123',
+      })
+
+      expect(await screen.findByText('Şifreniz güncellendi')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByLabelText('Mevcut Şifre')).toHaveValue(''))
+      expect(screen.getByLabelText('Yeni Şifre')).toHaveValue('')
+      expect(screen.getByLabelText('Yeni Şifre (Tekrar)')).toHaveValue('')
+    })
+
+    // AC7: a wrong current password is a 400 shown inline, not a logout or a toast
+    it('shows a 400 "Mevcut şifre hatalı" inline via role="alert"', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile()))
+
+      renderProfile()
+
+      await screen.findByLabelText('Mevcut Şifre')
+      await fillPasswordForm(user, { current: 'YanlisSifre1', next: 'YeniSifre123', confirm: 'YeniSifre123' })
+
+      vi.mocked(fetch).mockResolvedValueOnce(errorResponse(400, 'Mevcut şifre hatalı'))
+      await user.click(screen.getByRole('button', { name: 'Şifreyi Değiştir' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Mevcut şifre hatalı')
+      expect(screen.queryByText('Şifreniz güncellendi')).not.toBeInTheDocument()
+    })
+
+    // AC8: a rate-limited attempt shows the dedicated rate-limit message
+    it('shows the rate-limit message for a 429', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, makeProfile()))
+
+      renderProfile()
+
+      await screen.findByLabelText('Mevcut Şifre')
+      await fillPasswordForm(user, { current: 'EskiSifre123', next: 'YeniSifre123', confirm: 'YeniSifre123' })
+
+      vi.mocked(fetch).mockResolvedValueOnce(errorResponse(429, 'Too many requests'))
+      await user.click(screen.getByRole('button', { name: 'Şifreyi Değiştir' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Çok fazla deneme yaptınız, lütfen bir süre sonra tekrar deneyin.',
+      )
+    })
   })
 })

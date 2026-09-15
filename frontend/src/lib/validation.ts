@@ -52,12 +52,27 @@ export const commentSchema = z.object({
 
 export type CommentFormValues = z.infer<typeof commentSchema>
 
-export const createDepartmentAuthoritySchema = z.object({
+// The backend generates the password and whitelists the role.
+export const createUserSchema = z.object({
   name: z.string().trim().min(1, 'Ad zorunlu').max(150, 'Ad en fazla 150 karakter olabilir'),
   surname: z.string().trim().max(150, 'Soyad en fazla 150 karakter olabilir'),
   email: z.string().email('Geçerli bir email adresi girin'),
-  password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+  role: z.string().min(1, 'Rol seçilmeli'),
   department_id: z.string().min(1, 'Departman seçilmeli'),
 })
 
-export type CreateDepartmentAuthorityFormValues = z.infer<typeof createDepartmentAuthoritySchema>
+export type CreateUserFormValues = z.infer<typeof createUserSchema>
+
+// new_password_confirm is frontend-only; requests send current_password + new_password.
+export const changePasswordSchema = z
+  .object({
+    current_password: z.string().min(1, 'Mevcut şifre zorunlu'),
+    new_password: z.string().min(8, 'Şifre en az 8 karakter olmalı'),
+    new_password_confirm: z.string(),
+  })
+  .refine((v) => v.new_password === v.new_password_confirm, {
+    message: 'Şifreler eşleşmiyor',
+    path: ['new_password_confirm'],
+  })
+
+export type ChangePasswordFormValues = z.infer<typeof changePasswordSchema>

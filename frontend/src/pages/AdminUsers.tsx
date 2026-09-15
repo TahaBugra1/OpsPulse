@@ -3,9 +3,18 @@ import { useQueryClient } from '@tanstack/react-query'
 import { PackageOpen } from 'lucide-react'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
@@ -20,30 +29,34 @@ import {
 import { useAuth } from '@/context/AuthContext'
 import { usePageTitle } from '@/context/PageTitleContext'
 import { useDepartments } from '@/lib/departments'
-import { ROLE_LABELS, useCreateDepartmentAuthority, useDeactivateUser, useUsers } from '@/lib/users'
-import { createDepartmentAuthoritySchema, type CreateDepartmentAuthorityFormValues } from '@/lib/validation'
+import { ROLE_LABELS, useCreateUser, useDeactivateUser, useResetUserPassword, useUsers } from '@/lib/users'
+import { createUserSchema, type CreateUserFormValues } from '@/lib/validation'
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth()
   const queryClient = useQueryClient()
   const { data: departments, isPending: departmentsPending, isError: departmentsError, error: departmentsErrorObj, refetch: refetchDepartments } = useDepartments()
-  const createMutation = useCreateDepartmentAuthority()
+  const createMutation = useCreateUser()
   const deactivateMutation = useDeactivateUser()
+  const resetMutation = useResetUserPassword()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // Shown once, then discarded: local state only, never the query cache.
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null)
   const { data: users, isPending: usersPending, isError: usersIsError, error: usersError, refetch: refetchUsers } = useUsers()
   usePageTitle('Kullanıcılar')
 
-  const form = useForm<CreateDepartmentAuthorityFormValues>({
-    resolver: zodResolver(createDepartmentAuthoritySchema),
-    defaultValues: { name: '', surname: '', email: '', password: '', department_id: '' },
+  const form = useForm<CreateUserFormValues>({
+    resolver: zodResolver(createUserSchema),
+    defaultValues: { name: '', surname: '', email: '', role: '', department_id: '' },
   })
 
-  function onSubmit(values: CreateDepartmentAuthorityFormValues) {
+  function onSubmit(values: CreateUserFormValues) {
     setSubmitError(null)
     createMutation.mutate(values, {
-      onSuccess: () => {
+      onSuccess: (data) => {
         queryClient.invalidateQueries({ queryKey: ['admin-users'] })
         form.reset()
+        setTemporaryPassword(data.temporary_password)
       },
       onError: (err) => {
         setSubmitError(err instanceof Error ? err.message : 'Kullanıcı oluşturulamadı, lütfen tekrar deneyin')
@@ -59,11 +72,30 @@ export default function AdminUsers() {
     })
   }
 
+  function handleResetPassword(id: string) {
+    resetMutation.mutate(id, {
+      onSuccess: (data) => {
+        setTemporaryPassword(data.temporary_password)
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : 'Şifre sıfırlanamadı, lütfen tekrar deneyin')
+      },
+    })
+  }
+
+  function handleCopyPassword() {
+    if (temporaryPassword === null) return
+    navigator.clipboard.writeText(temporaryPassword).then(
+      () => toast.success('Şifre kopyalandı'),
+      () => toast.error('Kopyalanamadı, şifreyi elle kopyalayın'),
+    )
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Card className="w-full max-w-3xl">
         <CardHeader>
-          <CardTitle>Yeni Departman Yetkilisi</CardTitle>
+          <CardTitle>Yeni Kullanıcı</CardTitle>
         </CardHeader>
         <CardContent>
           {departmentsPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -135,17 +167,20 @@ export default function AdminUsers() {
 
                 <Controller
                   control={form.control}
-                  name="password"
+                  name="role"
                   render={({ field, fieldState }) => (
                     <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="admin-user-password">Şifre</FieldLabel>
-                      <Input
+                      <FieldLabel htmlFor="admin-user-role">Rol</FieldLabel>
+                      <Select
                         {...field}
-                        type="password"
-                        id="admin-user-password"
+                        id="admin-user-role"
                         disabled={createMutation.isPending}
                         aria-invalid={!!fieldState.error}
-                      />
+                      >
+                        <option value="">Seçiniz</option>
+                        <option value="EMPLOYEE">{ROLE_LABELS.EMPLOYEE}</option>
+                        <option value="DEPARTMENT_AUTHORITY">{ROLE_LABELS.DEPARTMENT_AUTHORITY}</option>
+                      </Select>
                       <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
                     </Field>
                   )}
@@ -242,16 +277,29 @@ export default function AdminUsers() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {row.id !== currentUser?.id && row.is_active ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleDeactivate(row.id)}
-                          disabled={deactivateMutation.isPending}
-                        >
-                          Pasife Al
-                        </Button>
-                      ) : null}
+                      <div className="flex gap-2">
+                        {row.id !== currentUser?.id && row.is_active ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleDeactivate(row.id)}
+                            disabled={deactivateMutation.isPending}
+                          >
+                            Pasife Al
+                          </Button>
+                        ) : null}
+                        {row.role !== 'ADMIN' && row.id !== currentUser?.id && row.is_active && row.has_password ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleResetPassword(row.id)}
+                            disabled={resetMutation.isPending}
+                          >
+                            Şifre Sıfırla
+                          </Button>
+                        ) : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -260,6 +308,35 @@ export default function AdminUsers() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={temporaryPassword !== null}
+        onOpenChange={(open) => {
+          if (!open) setTemporaryPassword(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Geçici Şifre</DialogTitle>
+            <DialogDescription>
+              Bu şifre bir daha gösterilmeyecek. Kullanıcıya iletin; ilk girişinde şifresini değiştirmesi istenecek.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-base select-all">
+              {temporaryPassword}
+            </code>
+            <Button type="button" variant="outline" onClick={handleCopyPassword}>
+              Kopyala
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setTemporaryPassword(null)}>
+              Tamam
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

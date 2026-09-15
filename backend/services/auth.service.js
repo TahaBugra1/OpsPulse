@@ -20,6 +20,7 @@ function toPublicUser(row) {
     email: row.email,
     role: row.role,
     department_id: row.department_id,
+    must_change_password: row.must_change_password,
   };
 }
 
@@ -92,7 +93,7 @@ async function register({ name, surname, email, password, department_id }) {
     result = await pool.query(
       `INSERT INTO users (name, surname, email, password_hash, role, department_id)
        VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5)
-       RETURNING id, name, surname, email, role, department_id`,
+       RETURNING id, name, surname, email, role, department_id, must_change_password`,
       [normalizedName.value, normalizedSurname.value, email, passwordHash, department_id]
     );
   } catch (dbErr) {
@@ -114,7 +115,7 @@ async function login({ email, password, rememberMe }) {
   let result;
   try {
     result = await pool.query(
-      'SELECT id, name, surname, email, password_hash, role, department_id, is_active FROM users WHERE email = $1',
+      'SELECT id, name, surname, email, password_hash, role, department_id, is_active, must_change_password FROM users WHERE email = $1',
       [email]
     );
   } catch (dbErr) {
@@ -151,7 +152,7 @@ async function loginWithGoogle({ id_token, rememberMe }, verifyFn = verifyGoogle
   let result;
   try {
     result = await pool.query(
-      'SELECT id, name, surname, email, role, department_id, is_active FROM users WHERE email = $1',
+      'SELECT id, name, surname, email, role, department_id, is_active, must_change_password FROM users WHERE email = $1',
       [claims.email]
     );
   } catch (dbErr) {
@@ -170,7 +171,7 @@ async function loginWithGoogle({ id_token, rememberMe }, verifyFn = verifyGoogle
       insertResult = await pool.query(
         `INSERT INTO users (name, surname, email, google_id, role)
          VALUES ($1, $2, $3, $4, 'EMPLOYEE')
-         RETURNING id, name, surname, email, role, department_id`,
+         RETURNING id, name, surname, email, role, department_id, must_change_password`,
         [claims.given_name, claims.family_name || null, claims.email, claims.sub]
       );
     } catch (dbErr) {

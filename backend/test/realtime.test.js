@@ -359,3 +359,32 @@ test('isolation - a socket that did not join the room receives no request:update
   assert.notEqual(joinedResult, joinedSentinel, 'the joined socket should have received the event');
   assert.equal(bystanderResult, bystanderSentinel, 'the non-joined socket must not receive the event (no global broadcast)');
 });
+
+// AC3: a user flagged must_change_password is rejected at the Socket.io
+// handshake even though their JWT is valid - REST blocking alone would leave
+// the real-time channel open.
+test('Socket.io handshake - a valid JWT for a must_change_password user is rejected with connect_error', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+  // Flag this test's own throwaway fixture, as an ADMIN provisioning/reset would.
+  await pool.query('UPDATE users SET must_change_password = true WHERE id = $1', [employee.id]);
+
+  const socket = connectSocket(employee.token);
+  t.after(() => socket.close());
+
+  let connectFired = false;
+  socket.on('connect', () => {
+    connectFired = true;
+  });
+
+  const err = await waitForConnect(socket).then(
+    () => null,
+    (connectError) => connectError
+  );
+
+  assert.ok(err, 'expected connect_error, but the socket connected');
+  assert.equal(err.message, 'Devam etmek için şifrenizi değiştirmeniz gerekiyor');
+  assert.equal(socket.connected, false);
+  await sleep(150);
+  assert.equal(connectFired, false, 'connect must never fire for a flagged user');
+});

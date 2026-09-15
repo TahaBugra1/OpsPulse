@@ -57,7 +57,16 @@ async function apiRequest<T>(
   const data = isJson ? await response.json().catch(() => null) : null
 
   if (!response.ok) {
-    if (response.status === 401 && path !== AUTH_LOGIN_PATH && path !== AUTH_GOOGLE_PATH) {
+    const isPasswordChangeRequired =
+      response.status === 403 &&
+      data !== null &&
+      typeof data === 'object' &&
+      'code' in data &&
+      data.code === 'PASSWORD_CHANGE_REQUIRED'
+    if (
+      (response.status === 401 && path !== AUTH_LOGIN_PATH && path !== AUTH_GOOGLE_PATH) ||
+      isPasswordChangeRequired
+    ) {
       unauthorizedHandler?.()
     }
 

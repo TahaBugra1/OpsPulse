@@ -1,6 +1,9 @@
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const request = require('supertest');
 
 const app = require('../server');
@@ -15,9 +18,10 @@ const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN;
 const NAME_ERROR = 'Ad zorunlu ve en fazla 150 karakter olabilir';
 const SURNAME_ERROR = 'Soyad en fazla 150 karakter olabilir';
 
-// The 7 fields services/users.service.js#toProfile is contractually allowed to
-// expose. password_hash / google_id must never be among them.
-const PROFILE_KEYS = ['department_id', 'department_name', 'email', 'id', 'name', 'role', 'surname'];
+// The 8 fields services/users.service.js#toProfile is contractually allowed to
+// expose. password_hash / google_id must never be among them - has_password is
+// the derived boolean (password_hash IS NOT NULL), never the hash itself.
+const PROFILE_KEYS = ['department_id', 'department_name', 'email', 'has_password', 'id', 'name', 'role', 'surname'];
 
 function validEmail() {
   return `test-${randomUUID()}@${ALLOWED_DOMAIN}`;
@@ -111,6 +115,8 @@ test.after(async () => {
 
 // Helper: creates a throwaway DEPARTMENT_AUTHORITY via POST /api/users as the
 // throwaway admin, using a valid active department. Returns the response.
+// No password is sent: the backend generates a temporary one and never reads
+// body.password. role is now an explicit, whitelisted input.
 async function postDeptAuthority(token, overrides = {}) {
   const deptRes = await pool.query('SELECT id FROM departments WHERE is_active = true LIMIT 1');
   const departmentId = deptRes.rows[0].id;
@@ -121,16 +127,16 @@ async function postDeptAuthority(token, overrides = {}) {
       name: 'New',
       surname: 'Authority',
       email: validEmail(),
-      password: 'sifre1234',
+      role: 'DEPARTMENT_AUTHORITY',
       department_id: departmentId,
       ...overrides,
     });
 }
 
-// AC1: GET /api/users/me returns exactly the 7 profile fields for the caller.
+// AC1: GET /api/users/me returns exactly the 8 profile fields for the caller.
 // A self-registered EMPLOYEE now always carries the department chosen at
 // registration, so department_id/department_name are populated, not null.
-test('GET /api/users/me - returns exactly the 7 profile fields, never password_hash/google_id', async (t) => {
+test('GET /api/users/me - returns exactly the 8 profile fields, never password_hash/google_id', async (t) => {
   const employee = await registerEmployee();
   t.after(() => deleteUser(employee.id));
 
@@ -599,22 +605,24 @@ test('GET /api/users - EMPLOYEE and DEPARTMENT_AUTHORITY are both forbidden (403
 
 // AC3: POST /api/users with valid data creates a DEPARTMENT_AUTHORITY, returns
 // 201, is really persisted with a correctly-hashed password, and the new user
-// can actually log in with the plaintext password used at creation.
+// can actually log in with the backend-generated temporary password returned
+// in the response (the admin no longer types a password).
 test('POST /api/users - valid data creates a DEPARTMENT_AUTHORITY that is persisted and can log in', async (t) => {
   const deptRes = await pool.query('SELECT id, name FROM departments WHERE is_active = true LIMIT 1');
   const department = deptRes.rows[0];
   const email = validEmail();
-  const password = 'sifre1234';
 
   const res = await request(app)
     .post('/api/users')
     .set('Authorization', `Bearer ${adminToken}`)
-    .send({ name: 'Yeni', surname: 'Yetkili', email, password, department_id: department.id });
+    .send({ name: 'Yeni', surname: 'Yetkili', email, role: 'DEPARTMENT_AUTHORITY', department_id: department.id });
 
   assert.equal(res.status, 201, JSON.stringify(res.body));
+  t.after(() => deleteUser(res.body.id));
   assert.equal(res.body.role, 'DEPARTMENT_AUTHORITY');
   assert.equal(res.body.email, email);
-  t.after(() => deleteUser(res.body.id));
+  const temporaryPassword = res.body.temporary_password;
+  assert.equal(typeof temporaryPassword, 'string');
 
   // Really persisted, with the exact requested department and a bcrypt hash
   // (never the plaintext password).
@@ -625,39 +633,37 @@ test('POST /api/users - valid data creates a DEPARTMENT_AUTHORITY that is persis
   assert.equal(row.rows.length, 1);
   assert.equal(row.rows[0].role, 'DEPARTMENT_AUTHORITY');
   assert.equal(row.rows[0].department_id, department.id);
-  assert.notEqual(row.rows[0].password_hash, password);
+  assert.notEqual(row.rows[0].password_hash, temporaryPassword);
   assert.ok(row.rows[0].password_hash.startsWith('$2'), 'password must be bcrypt-hashed');
 
-  // The new user can really log in with the plaintext password.
+  // The new user can really log in with the returned temporary password.
   const loginRes = await request(app)
     .post('/api/auth/login')
-    .send({ email, password });
+    .send({ email, password: temporaryPassword });
   assert.equal(loginRes.status, 200, JSON.stringify(loginRes.body));
   assert.equal(loginRes.body.user.id, res.body.id);
   assert.equal(loginRes.body.user.role, 'DEPARTMENT_AUTHORITY');
 });
 
-// AC4 (THE MOST IMPORTANT TEST IN THIS TASK): a body that additionally
-// includes role: 'ADMIN' (or any other role) is completely ignored - the
-// created user is still DEPARTMENT_AUTHORITY in the database.
-test('POST /api/users - a role field in the body (e.g. role: ADMIN) is ignored, never escalates privilege', async (t) => {
-  const attemptedRoles = ['ADMIN', 'EMPLOYEE', 'DEPARTMENT_AUTHORITY', 'SUPERADMIN', 'admin'];
+// AC2 (THE MOST IMPORTANT TEST IN THIS TASK): role is now an explicit input,
+// so privilege escalation is prevented by a whitelist rather than by ignoring
+// the field. role: 'ADMIN' (and look-alikes) is a controlled 400 and no row -
+// of any role - is created for that email.
+test('POST /api/users - role ADMIN (or a look-alike) is rejected with 400, never escalates privilege', async () => {
+  const attemptedRoles = ['ADMIN', 'admin', 'SUPERADMIN', 'Admin'];
 
   for (const attemptedRole of attemptedRoles) {
+    const email = validEmail();
     // eslint-disable-next-line no-await-in-loop
-    const res = await postDeptAuthority(adminToken, { role: attemptedRole });
-    assert.equal(res.status, 201, `${attemptedRole}: ${JSON.stringify(res.body)}`);
-    assert.equal(res.body.role, 'DEPARTMENT_AUTHORITY', `response role escalated via body.role=${attemptedRole}`);
-    t.after(() => deleteUser(res.body.id));
+    const res = await postDeptAuthority(adminToken, { email, role: attemptedRole });
+    assert.equal(res.status, 400, `${attemptedRole}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, 'Geçersiz rol', attemptedRole);
+    assert.equal(res.body.temporary_password, undefined, `${attemptedRole}: no temporary password may be issued`);
 
-    // Assert from the database, not just the response projection.
+    // Assert from the database, not just the response.
     // eslint-disable-next-line no-await-in-loop
-    const row = await pool.query('SELECT role FROM users WHERE id = $1', [res.body.id]);
-    assert.equal(
-      row.rows[0].role,
-      'DEPARTMENT_AUTHORITY',
-      `DB role must remain DEPARTMENT_AUTHORITY despite body.role=${attemptedRole}`
-    );
+    const row = await pool.query('SELECT id, role FROM users WHERE email = $1', [email]);
+    assert.equal(row.rows.length, 0, `no user may be created for body.role=${attemptedRole}`);
   }
 });
 
@@ -745,15 +751,25 @@ test('POST /api/users - wrong email domain returns 400 and creates no row', asyn
   assert.equal(check.rows.length, 0);
 });
 
-test('POST /api/users - password under 8 chars returns 400 and creates no row', async () => {
+// The password is no longer an input: services/users.service.js#createUser never
+// reads body.password. A client-supplied one must not become the account's
+// password - only the returned temporary_password logs in.
+test('POST /api/users - a password supplied in the body is ignored; only the temporary password logs in', async (t) => {
   const email = validEmail();
-  const res = await postDeptAuthority(adminToken, { email, password: 'short1' });
+  const bodyPassword = 'sifre1234body';
+  const res = await postDeptAuthority(adminToken, { email, password: bodyPassword });
 
-  assert.equal(res.status, 400, JSON.stringify(res.body));
-  assert.equal(res.body.message, 'Şifre en az 8 karakter olmalı');
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  t.after(() => deleteUser(res.body.id));
+  assert.notEqual(res.body.temporary_password, bodyPassword);
 
-  const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-  assert.equal(check.rows.length, 0);
+  const withBodyPassword = await request(app).post('/api/auth/login').send({ email, password: bodyPassword });
+  assert.equal(withBodyPassword.status, 401, JSON.stringify(withBodyPassword.body));
+
+  const withTemporaryPassword = await request(app)
+    .post('/api/auth/login')
+    .send({ email, password: res.body.temporary_password });
+  assert.equal(withTemporaryPassword.status, 200, JSON.stringify(withTemporaryPassword.body));
 });
 
 test('POST /api/users - missing department_id returns 400 and creates no row', async () => {
@@ -761,7 +777,7 @@ test('POST /api/users - missing department_id returns 400 and creates no row', a
   const res = await request(app)
     .post('/api/users')
     .set('Authorization', `Bearer ${adminToken}`)
-    .send({ name: 'No', surname: 'Department', email, password: 'sifre1234' });
+    .send({ name: 'No', surname: 'Department', email, role: 'DEPARTMENT_AUTHORITY' });
 
   assert.equal(res.status, 400, JSON.stringify(res.body));
   assert.equal(res.body.message, 'Departman seçilmeli');
@@ -1256,4 +1272,469 @@ test('GET /api/users/team - the calling DEPARTMENT_AUTHORITY own row never appea
     !res.body.some((u) => u.id === itAuthorityId),
     'a DEPARTMENT_AUTHORITY must never see their own row (or any other non-EMPLOYEE role) in the team list'
   );
+});
+
+// ---------------------------------------------------------------------------
+// Admin-provisioned accounts: backend-generated temporary password, forced
+// password change (users.must_change_password), ADMIN password reset, and the
+// self-service PATCH /api/users/me/password
+// ---------------------------------------------------------------------------
+
+const TEMP_PASSWORD_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789]{12}$/;
+const PASSWORD_CHANGE_REQUIRED = 'Devam etmek için şifrenizi değiştirmeniz gerekiyor';
+
+// Reads the auth-relevant columns straight from the row, so assertions never
+// depend on the API projection (which deliberately hides password_hash).
+async function readAuthRow(userId) {
+  const res = await pool.query(
+    'SELECT id, role, is_active, password_hash, must_change_password FROM users WHERE id = $1',
+    [userId]
+  );
+  return res.rows[0];
+}
+
+function login(email, password) {
+  return request(app).post('/api/auth/login').send({ email, password });
+}
+
+function changePassword(token, body) {
+  return request(app).patch('/api/users/me/password').set('Authorization', `Bearer ${token}`).send(body);
+}
+
+function resetPassword(token, targetId) {
+  return request(app).post(`/api/users/${targetId}/reset-password`).set('Authorization', `Bearer ${token}`).send();
+}
+
+function assertPasswordChangeRequired(res, label) {
+  assert.equal(res.status, 403, `${label}: ${JSON.stringify(res.body)}`);
+  assert.equal(res.body.code, 'PASSWORD_CHANGE_REQUIRED', label);
+  assert.equal(res.body.message, PASSWORD_CHANGE_REQUIRED, label);
+}
+
+// Provisions a throwaway user through the real ADMIN path (POST /api/users),
+// registers its cleanup, and returns { id, email, temporaryPassword, body }.
+async function provisionUser(t, role = 'EMPLOYEE') {
+  const department = await activeDepartment();
+  const email = validEmail();
+  const res = await request(app)
+    .post('/api/users')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send({ name: 'Provisioned', surname: 'User', email, role, department_id: department.id });
+  assert.equal(res.status, 201, `provisioning failed: ${JSON.stringify(res.body)}`);
+  t.after(() => deleteUser(res.body.id));
+  return { id: res.body.id, email, temporaryPassword: res.body.temporary_password, body: res.body, department };
+}
+
+// Provisions a user and logs in with the temporary password; the returned token
+// belongs to a user whose must_change_password flag is on.
+async function provisionFlaggedUser(t, role = 'EMPLOYEE') {
+  const provisioned = await provisionUser(t, role);
+  const loginRes = await login(provisioned.email, provisioned.temporaryPassword);
+  assert.equal(loginRes.status, 200, `flagged user login failed: ${JSON.stringify(loginRes.body)}`);
+  return { ...provisioned, token: loginRes.body.token };
+}
+
+// A Google-only account (google_id, no password_hash), created via SQL exactly
+// like services/auth.service.js#loginWithGoogle inserts one. Its token is
+// signed directly, as backend/test/auth.middleware.test.js does.
+async function createGoogleOnlyUser(t) {
+  const department = await activeDepartment();
+  const insert = await pool.query(
+    `INSERT INTO users (name, surname, email, google_id, role, department_id)
+     VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5) RETURNING id, role, department_id`,
+    ['Google', 'Only', validEmail(), `google-sub-${randomUUID()}`, department.id]
+  );
+  const row = insert.rows[0];
+  t.after(() => deleteUser(row.id));
+  const token = jwt.sign({ sub: row.id, role: row.role, department_id: row.department_id }, process.env.JWT_SECRET);
+  return { id: row.id, token };
+}
+
+// AC1: ADMIN creates an EMPLOYEE and, separately, a DEPARTMENT_AUTHORITY. Each
+// gets a 12-char temp password from the documented alphabet, returned once;
+// the DB holds only its bcrypt hash, and the flag is on.
+for (const role of ['EMPLOYEE', 'DEPARTMENT_AUTHORITY']) {
+  test(`POST /api/users - ADMIN creates a ${role} with a one-time 12-char temporary password, stored only as a bcrypt hash, flag on`, async (t) => {
+    const provisioned = await provisionUser(t, role);
+    const { body, temporaryPassword } = provisioned;
+
+    assert.match(temporaryPassword, TEMP_PASSWORD_RE);
+    assert.equal(body.role, role);
+    assert.equal(body.email, provisioned.email);
+    assert.equal(body.department_id, provisioned.department.id);
+    assert.equal('password_hash' in body, false);
+    assert.equal(JSON.stringify(body).includes('password_hash'), false);
+
+    const row = await readAuthRow(provisioned.id);
+    assert.equal(row.role, role);
+    assert.equal(row.must_change_password, true);
+    assert.notEqual(row.password_hash, temporaryPassword);
+    assert.ok(row.password_hash.startsWith('$2'), 'the temporary password must be stored as a bcrypt hash');
+    assert.equal(await bcrypt.compare(temporaryPassword, row.password_hash), true);
+
+    // Login still succeeds for a flagged user - they need a token to change it.
+    const loginRes = await login(provisioned.email, temporaryPassword);
+    assert.equal(loginRes.status, 200, JSON.stringify(loginRes.body));
+    assert.equal(loginRes.body.user.must_change_password, true);
+    assert.equal(loginRes.body.user.role, role);
+  });
+}
+
+// AC2: a missing role or an arbitrary string is rejected with the same
+// controlled 400 as role ADMIN, and no row is written.
+test('POST /api/users - role ADMIN, a missing role or an unknown role string returns 400 Geçersiz rol and creates no row', async () => {
+  const cases = [
+    { label: 'role ADMIN', overrides: { role: 'ADMIN' } },
+    { label: 'role missing', overrides: { role: undefined } },
+    { label: 'role SUPERUSER', overrides: { role: 'SUPERUSER' } },
+  ];
+
+  for (const { label, overrides } of cases) {
+    const email = validEmail();
+    // eslint-disable-next-line no-await-in-loop
+    const res = await postDeptAuthority(adminToken, { email, ...overrides });
+    assert.equal(res.status, 400, `${label}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, 'Geçersiz rol', label);
+
+    // eslint-disable-next-line no-await-in-loop
+    const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    assert.equal(check.rows.length, 0, `${label}: no row may be created`);
+  }
+});
+
+// AC3: while the flag is on, every authenticated REST call except the one
+// change-password route is a 403 carrying code PASSWORD_CHANGE_REQUIRED - under
+// /api/users and under an unrelated prefix alike.
+test('must_change_password - a flagged user is blocked everywhere except PATCH /api/users/me/password', async (t) => {
+  const flagged = await provisionFlaggedUser(t);
+
+  const me = await request(app).get('/api/users/me').set('Authorization', `Bearer ${flagged.token}`);
+  assertPasswordChangeRequired(me, 'GET /api/users/me');
+
+  const requests = await request(app).get('/api/requests').set('Authorization', `Bearer ${flagged.token}`);
+  assertPasswordChangeRequired(requests, 'GET /api/requests');
+
+  // The exempt route is reachable: it runs its own validation instead of the block.
+  const change = await changePassword(flagged.token, {});
+  assert.notEqual(change.body.code, 'PASSWORD_CHANGE_REQUIRED', JSON.stringify(change.body));
+  assert.equal(change.status, 400, JSON.stringify(change.body));
+  assert.equal(change.body.message, 'Şifre en az 8 karakter olmalı');
+
+  const row = await readAuthRow(flagged.id);
+  assert.equal(row.must_change_password, true, 'a rejected change must not clear the flag');
+});
+
+// AC4: changing the temp password clears the flag, unblocks the same token, and
+// retires the temporary password.
+test('PATCH /api/users/me/password - a flagged user changes the temp password, the flag clears and the temp password stops working', async (t) => {
+  const flagged = await provisionFlaggedUser(t);
+  const newPassword = 'YeniSifre12345';
+
+  const res = await changePassword(flagged.token, {
+    current_password: flagged.temporaryPassword,
+    new_password: newPassword,
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.must_change_password, false);
+  assert.equal(res.body.id, flagged.id);
+  assert.equal('password_hash' in res.body, false);
+
+  const row = await readAuthRow(flagged.id);
+  assert.equal(row.must_change_password, false);
+  assert.equal(await bcrypt.compare(newPassword, row.password_hash), true);
+
+  const me = await request(app).get('/api/users/me').set('Authorization', `Bearer ${flagged.token}`);
+  assert.equal(me.status, 200, JSON.stringify(me.body));
+
+  const withTemp = await login(flagged.email, flagged.temporaryPassword);
+  assert.equal(withTemp.status, 401, JSON.stringify(withTemp.body));
+
+  const withNew = await login(flagged.email, newPassword);
+  assert.equal(withNew.status, 200, JSON.stringify(withNew.body));
+  assert.equal(withNew.body.user.must_change_password, false);
+});
+
+// AC5: create and reset are ADMIN-only - an EMPLOYEE and a DEPARTMENT_AUTHORITY
+// both get 403 and nothing changes.
+test('POST /api/users and POST /api/users/:id/reset-password - EMPLOYEE and DEPARTMENT_AUTHORITY get 403', async (t) => {
+  const employee = await registerEmployee();
+  const target = await registerEmployee();
+  t.after(() => deleteUser(target.id));
+  t.after(() => deleteUser(employee.id));
+  const targetBefore = await readAuthRow(target.id);
+
+  for (const [label, token] of [['EMPLOYEE', employee.token], ['DEPARTMENT_AUTHORITY', itAuthorityToken]]) {
+    const email = validEmail();
+    // eslint-disable-next-line no-await-in-loop
+    const createRes = await postDeptAuthority(token, { email, role: 'EMPLOYEE' });
+    assert.equal(createRes.status, 403, `${label} create: ${JSON.stringify(createRes.body)}`);
+    assert.equal(createRes.body.message, 'Bu işlem için yetkiniz yok');
+    // eslint-disable-next-line no-await-in-loop
+    const created = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    assert.equal(created.rows.length, 0, `${label}: no row may be created`);
+
+    // eslint-disable-next-line no-await-in-loop
+    const resetRes = await resetPassword(token, target.id);
+    assert.equal(resetRes.status, 403, `${label} reset: ${JSON.stringify(resetRes.body)}`);
+    assert.equal(resetRes.body.message, 'Bu işlem için yetkiniz yok');
+    assert.equal(resetRes.body.temporary_password, undefined);
+  }
+
+  assert.deepEqual(await readAuthRow(target.id), targetBefore, 'a forbidden reset must not touch the target');
+});
+
+// AC5: an ADMIN cannot reset their own password through the reset endpoint.
+test('POST /api/users/:id/reset-password - an ADMIN resetting themselves gets 400 and nothing changes', async () => {
+  const before = await readAuthRow(adminId);
+
+  const res = await resetPassword(adminToken, adminId);
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Kendi şifrenizi sıfırlayamazsınız');
+  assert.equal(res.body.temporary_password, undefined);
+
+  assert.deepEqual(await readAuthRow(adminId), before);
+});
+
+// AC5: an ADMIN cannot reset another ADMIN.
+test('POST /api/users/:id/reset-password - an ADMIN resetting another ADMIN gets 403 and the hash is unchanged', async (t) => {
+  // Second throwaway ADMIN, created via SQL exactly like test.before does.
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const otherAdmin = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role) VALUES ($1, $2, $3, $4, 'ADMIN') RETURNING id`,
+    ['Other', 'Admin', `admin-${randomUUID()}@opspulse.com`, pwRow.rows[0].password_hash]
+  );
+  const otherAdminId = otherAdmin.rows[0].id;
+  t.after(() => deleteUser(otherAdminId));
+  const before = await readAuthRow(otherAdminId);
+
+  const res = await resetPassword(adminToken, otherAdminId);
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu işlem için yetkiniz yok');
+  assert.equal(res.body.temporary_password, undefined);
+
+  const after = await readAuthRow(otherAdminId);
+  assert.equal(after.password_hash, before.password_hash);
+  assert.equal(after.must_change_password, false);
+});
+
+// AC6: a reset issues a new temp password, retires the old password, re-arms the
+// flag, and blocks the user's already-issued token on its very next request.
+test('POST /api/users/:id/reset-password - ADMIN reset retires the old password, re-arms the flag and blocks the open session', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+
+  const preReset = await login(employee.email, 'sifre1234test');
+  assert.equal(preReset.status, 200, JSON.stringify(preReset.body));
+  const openSessionToken = preReset.body.token;
+
+  const res = await resetPassword(adminToken, employee.id);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(Object.keys(res.body), ['temporary_password']);
+  assert.match(res.body.temporary_password, TEMP_PASSWORD_RE);
+
+  const withOld = await login(employee.email, 'sifre1234test');
+  assert.equal(withOld.status, 401, JSON.stringify(withOld.body));
+
+  const withTemp = await login(employee.email, res.body.temporary_password);
+  assert.equal(withTemp.status, 200, JSON.stringify(withTemp.body));
+  assert.equal(withTemp.body.user.must_change_password, true);
+
+  const me = await request(app).get('/api/users/me').set('Authorization', `Bearer ${openSessionToken}`);
+  assertPasswordChangeRequired(me, 'pre-reset token');
+
+  const row = await readAuthRow(employee.id);
+  assert.equal(row.must_change_password, true);
+  assert.equal(await bcrypt.compare(res.body.temporary_password, row.password_hash), true);
+});
+
+// Reset rejections: inactive target, Google-only target, malformed id and an
+// unknown id each return the controlled error and never touch a row.
+test('POST /api/users/:id/reset-password - inactive, Google-only, malformed and unknown targets are rejected without changes', async (t) => {
+  const inactive = await registerEmployee();
+  t.after(() => deleteUser(inactive.id));
+  await pool.query('UPDATE users SET is_active = false WHERE id = $1', [inactive.id]);
+  const inactiveBefore = await readAuthRow(inactive.id);
+
+  const inactiveRes = await resetPassword(adminToken, inactive.id);
+  assert.equal(inactiveRes.status, 400, JSON.stringify(inactiveRes.body));
+  assert.equal(inactiveRes.body.message, 'Pasif kullanıcının şifresi sıfırlanamaz');
+  assert.deepEqual(await readAuthRow(inactive.id), inactiveBefore);
+
+  const googleOnly = await createGoogleOnlyUser(t);
+  const googleBefore = await readAuthRow(googleOnly.id);
+
+  const googleRes = await resetPassword(adminToken, googleOnly.id);
+  assert.equal(googleRes.status, 400, JSON.stringify(googleRes.body));
+  assert.equal(googleRes.body.message, 'Bu hesap sadece Google ile giriş yapıyor, şifre sıfırlanamaz');
+  const googleAfter = await readAuthRow(googleOnly.id);
+  assert.deepEqual(googleAfter, googleBefore);
+  assert.equal(googleAfter.password_hash, null);
+
+  const malformedRes = await resetPassword(adminToken, 'not-a-uuid');
+  assert.equal(malformedRes.status, 404, JSON.stringify(malformedRes.body));
+  assert.equal(malformedRes.body.message, 'Kullanıcı bulunamadı');
+
+  const unknownId = randomUUID();
+  const unknownRes = await resetPassword(adminToken, unknownId);
+  assert.equal(unknownRes.status, 404, JSON.stringify(unknownRes.body));
+  assert.equal(unknownRes.body.message, 'Kullanıcı bulunamadı');
+  const unknownRow = await pool.query('SELECT id FROM users WHERE id = $1', [unknownId]);
+  assert.equal(unknownRow.rows.length, 0);
+});
+
+// AC7: wrong current password (400, never 401 - the frontend logs out on 401),
+// a too-short new password, and new === current are each controlled 400s that
+// leave the stored hash untouched.
+test('PATCH /api/users/me/password - wrong current, short new and unchanged new password are 400s that leave the hash untouched', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+  const before = await readAuthRow(employee.id);
+
+  const cases = [
+    {
+      label: 'wrong current password',
+      body: { current_password: 'yanlis-sifre-123', new_password: 'YeniSifre12345' },
+      message: 'Mevcut şifre hatalı',
+    },
+    {
+      label: 'new password of 7 chars',
+      body: { current_password: 'sifre1234test', new_password: 'kisa123' },
+      message: 'Şifre en az 8 karakter olmalı',
+    },
+    {
+      label: 'new password equals current',
+      body: { current_password: 'sifre1234test', new_password: 'sifre1234test' },
+      message: 'Yeni şifre mevcut şifreyle aynı olamaz',
+    },
+  ];
+
+  for (const { label, body, message } of cases) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await changePassword(employee.token, body);
+    assert.notEqual(res.status, 401, `${label}: must never be 401`);
+    assert.equal(res.status, 400, `${label}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, message, label);
+
+    // eslint-disable-next-line no-await-in-loop
+    const after = await readAuthRow(employee.id);
+    assert.equal(after.password_hash, before.password_hash, `${label}: password_hash must be unchanged`);
+    assert.equal(after.must_change_password, before.must_change_password, label);
+  }
+});
+
+// AC8: the change-password limiter is 5 requests per user per 15 minutes, and it
+// is keyed per user - another user is unaffected. Both users are dedicated to
+// this test, since the limiter's in-memory store lives for the whole file.
+test('PATCH /api/users/me/password - the 6th request within 15 minutes returns 429, keyed per user', async (t) => {
+  const limited = await registerEmployee();
+  const bystander = await registerEmployee();
+  t.after(() => deleteUser(bystander.id));
+  t.after(() => deleteUser(limited.id));
+
+  const body = { current_password: 'yanlis-sifre-123', new_password: 'YeniSifre12345' };
+  for (let i = 1; i <= 5; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await changePassword(limited.token, body);
+    assert.notEqual(res.status, 429, `request ${i} must not be rate limited yet`);
+  }
+
+  const sixth = await changePassword(limited.token, body);
+  assert.equal(sixth.status, 429, JSON.stringify(sixth.body));
+
+  const other = await changePassword(bystander.token, body);
+  assert.notEqual(other.status, 429, "another user must not share the first user's limit");
+  assert.equal(other.status, 400, JSON.stringify(other.body));
+});
+
+// AC9 / AC10: an unflagged, self-registered user can change their password
+// voluntarily; it stays unflagged and the new password logs in.
+test('PATCH /api/users/me/password - an unflagged self-registered user can change their password voluntarily', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+  assert.equal((await readAuthRow(employee.id)).must_change_password, false);
+
+  const res = await changePassword(employee.token, {
+    current_password: 'sifre1234test',
+    new_password: 'GonulluSifre987',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.must_change_password, false);
+
+  const withNew = await login(employee.email, 'GonulluSifre987');
+  assert.equal(withNew.status, 200, JSON.stringify(withNew.body));
+});
+
+// AC9: a Google-only account has no password to change - controlled 400, and
+// its profile reports has_password false; a normal account reports true.
+test('PATCH /api/users/me/password + GET /api/users/me - Google-only accounts get 400 and has_password false', async (t) => {
+  const googleOnly = await createGoogleOnlyUser(t);
+
+  const res = await changePassword(googleOnly.token, {
+    current_password: 'anything-at-all',
+    new_password: 'YeniSifre12345',
+  });
+  assert.equal(res.status, 400, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Bu hesap sadece Google ile giriş yapıyor, şifre değiştirilemez');
+  assert.equal((await readAuthRow(googleOnly.id)).password_hash, null);
+
+  const googleMe = await request(app).get('/api/users/me').set('Authorization', `Bearer ${googleOnly.token}`);
+  assert.equal(googleMe.status, 200, JSON.stringify(googleMe.body));
+  assert.equal(googleMe.body.has_password, false);
+
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+  const employeeMe = await request(app).get('/api/users/me').set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(employeeMe.status, 200, JSON.stringify(employeeMe.body));
+  assert.equal(employeeMe.body.has_password, true);
+});
+
+// GET /api/users exposes has_password (drives the "Şifre Sıfırla" button) and
+// still never the hash.
+test('GET /api/users - every row carries a boolean has_password and no row carries password_hash', async (t) => {
+  const googleOnly = await createGoogleOnlyUser(t);
+
+  const res = await request(app).get('/api/users').set('Authorization', `Bearer ${adminToken}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(res.body.length > 0);
+
+  for (const row of res.body) {
+    assert.equal(typeof row.has_password, 'boolean', `row ${row.id} must carry a boolean has_password`);
+    assert.equal('password_hash' in row, false, `row ${row.id} must not carry password_hash`);
+  }
+
+  assert.equal(res.body.find((u) => u.id === adminId).has_password, true);
+  assert.equal(res.body.find((u) => u.id === googleOnly.id).has_password, false);
+});
+
+// Compare-and-swap: an ADMIN reset that lands between changeMyPassword's read of
+// the hash and its UPDATE must not be silently overwritten. bcrypt.hash (called
+// in exactly that window, on the same cached module users.service.js uses) is
+// wrapped so the "concurrent reset" is written first, deterministically.
+test('PATCH /api/users/me/password - a reset landing between read and write yields 409 and the reset hash survives', async (t) => {
+  const employee = await registerEmployee();
+  t.after(() => deleteUser(employee.id));
+  const newPassword = 'YarisSifre12345';
+
+  // Computed before the mock is installed, so it is a real, unrelated hash.
+  const resetHash = await bcrypt.hash(`simulated-admin-reset-${randomUUID()}`, 10);
+
+  const originalHash = bcrypt.hash.bind(bcrypt);
+  mock.method(bcrypt, 'hash', async (...args) => {
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [resetHash, employee.id]);
+    return originalHash(...args);
+  });
+  t.after(() => mock.restoreAll());
+
+  const res = await changePassword(employee.token, {
+    current_password: 'sifre1234test',
+    new_password: newPassword,
+  });
+
+  assert.equal(bcrypt.hash.mock.callCount(), 1, 'the service must have hashed the new password exactly once');
+  assert.equal(res.status, 409, JSON.stringify(res.body));
+  assert.equal(res.body.message, 'Şifre bu sırada değişti, lütfen tekrar deneyin');
+
+  const row = await readAuthRow(employee.id);
+  assert.equal(row.password_hash, resetHash, 'the concurrent reset hash must not be overwritten');
+  assert.equal(await bcrypt.compare(newPassword, row.password_hash), false);
 });

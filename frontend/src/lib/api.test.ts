@@ -91,4 +91,48 @@ describe('api', () => {
     // If a stale handler from a previous test were still registered and threw, this test would fail
     // with an unhandled exception instead of the expected ApiError above.
   })
+
+  // A 403 carrying code PASSWORD_CHANGE_REQUIRED (the backend blocking a flagged
+  // user) fires the same handler as a 401, and the ApiError is still thrown
+  it('calls the unauthorized handler once and still throws a 403 ApiError for PASSWORD_CHANGE_REQUIRED', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(403, {
+        message: 'Devam etmek için şifrenizi değiştirmeniz gerekiyor',
+        code: 'PASSWORD_CHANGE_REQUIRED',
+      }),
+    )
+
+    const error = await apiGet('/api/requests').catch((e: unknown) => e)
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(403)
+    expect((error as ApiError).message).toBe('Devam etmek için şifrenizi değiştirmeniz gerekiyor')
+  })
+
+  // A plain 403 (e.g. a role check) must NOT log the user out
+  it('does not call the unauthorized handler for a plain 403 without a code', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(403, { message: 'Bu işlem için yetkiniz yok' }))
+
+    const error = await apiGet('/api/users').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(403)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  // Only the exact PASSWORD_CHANGE_REQUIRED code counts
+  it('does not call the unauthorized handler for a 403 with a different code', async () => {
+    const handler = vi.fn()
+    setUnauthorizedHandler(handler)
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(403, { message: 'Hesap aktif değil', code: 'SOMETHING_ELSE' }))
+
+    await expect(apiGet('/api/users/me')).rejects.toBeInstanceOf(ApiError)
+
+    expect(handler).not.toHaveBeenCalled()
+  })
 })

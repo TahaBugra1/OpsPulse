@@ -355,11 +355,38 @@ test('POST /api/auth/register - the response never contains password_hash', asyn
   assert.deepEqual(Object.keys(res.body).sort(), ['token', 'user']);
   assert.deepEqual(
     Object.keys(res.body.user).sort(),
-    ['department_id', 'email', 'id', 'name', 'role', 'surname']
+    ['department_id', 'email', 'id', 'must_change_password', 'name', 'role', 'surname']
   );
+  // A self-registered user chose their own password - never forced to change it.
+  assert.equal(res.body.user.must_change_password, false);
   assert.equal(res.body.user.password_hash, undefined);
   assert.equal(res.body.password_hash, undefined);
   assert.equal(JSON.stringify(res.body).includes('password_hash'), false);
+});
+
+// A user flagged with must_change_password (admin-provisioned or reset) can
+// still log in - they need a token to reach PATCH /api/users/me/password - and
+// the flag is surfaced so the frontend can divert them to the forced screen.
+test('POST /api/auth/login - a user flagged must_change_password still logs in, and the flag is returned', async (t) => {
+  const email = validEmail();
+  const password = 'gecici-sifre-123';
+  const passwordHash = await bcrypt.hash(password, 10);
+  t.after(() => deleteUserByEmail(email));
+  const department = await activeDepartment();
+
+  await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id, must_change_password)
+     VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5, true)`,
+    ['Flagged', 'User', email, passwordHash, department.id]
+  );
+
+  const res = await request(app).post('/api/auth/login').send({ email, password });
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(typeof res.body.token, 'string');
+  assert.equal(res.body.user.email, email);
+  assert.equal(res.body.user.must_change_password, true);
+  assert.equal('password_hash' in res.body.user, false);
 });
 
 // AC1 (ordering guard): the department check runs AFTER the duplicate-email and
