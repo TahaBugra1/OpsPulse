@@ -112,7 +112,7 @@ export function AppShell() {
             <Activity className="size-6 text-sidebar-primary" />
             <span className="text-lg font-semibold text-sidebar-foreground">OpsPulse</span>
           </div>
-          <nav className="flex flex-col gap-1">
+          <nav className="flex flex-1 flex-col gap-1">
             {navItems.map((item) => {
               const Icon = item.icon
               return (
@@ -144,84 +144,85 @@ export function AppShell() {
               )
             })}
           </nav>
+
+          <DropdownMenu onOpenChange={setNotificationsOpen}>
+            <DropdownMenuTrigger
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/85 outline-none hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground data-popup-open:bg-sidebar-accent/60"
+            >
+              <Bell className="size-4" />
+              Bildirimler
+              {!!unreadCount && (
+                <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
+                  {unreadCount}
+                </span>
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-80">
+              <div className="flex items-center justify-between px-1.5 py-1">
+                <span className="text-xs font-medium text-muted-foreground">Bildirimler</span>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={handleMarkAllAsRead}
+                >
+                  Tümünü Okundu İşaretle
+                </button>
+              </div>
+              <DropdownMenuSeparator />
+              {notificationsQuery.data && notificationsQuery.data.length === 0 && (
+                <div className="px-1.5 py-2 text-sm text-muted-foreground">Bildirim yok</div>
+              )}
+              {notificationsQuery.data?.map((notification) => (
+                <DropdownMenuItem key={notification.id} onClick={() => handleNotificationClick(notification)}>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="whitespace-normal">{notification.message}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(notification.created_at).toLocaleString('tr-TR')}
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className="border-t border-sidebar-border pt-3">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent/60 data-popup-open:bg-sidebar-accent/60"
+              >
+                <div
+                  aria-hidden="true"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
+                >
+                  {initials}
+                </div>
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm font-medium text-sidebar-foreground">
+                    {user?.name} {user?.surname ?? ''}
+                  </span>
+                  <span className="truncate text-xs text-sidebar-foreground/70">
+                    {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
+                  </span>
+                </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-56">
+                <DropdownMenuItem onClick={() => navigate('/profile')}>
+                  <User className="size-4" />
+                  Profilim
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={logout}>
+                  <LogOut className="size-4" />
+                  Çıkış Yap
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </aside>
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-8">
+          <header className="flex h-14 shrink-0 items-center border-b border-border bg-background px-8">
             <HeaderTitle />
-            <div className="flex items-center gap-1">
-              <DropdownMenu onOpenChange={setNotificationsOpen}>
-                <DropdownMenuTrigger
-                  aria-label="Bildirimler"
-                  className="relative flex size-9 items-center justify-center rounded-md text-foreground outline-none hover:bg-accent hover:text-accent-foreground data-popup-open:bg-accent"
-                >
-                  <Bell className="size-4" />
-                  {!!unreadCount && (
-                    <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground">
-                      {unreadCount}
-                    </span>
-                  )}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="bottom" align="end" className="w-80">
-                  <div className="flex items-center justify-between px-1.5 py-1">
-                    <span className="text-xs font-medium text-muted-foreground">Bildirimler</span>
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-primary hover:underline"
-                      onClick={handleMarkAllAsRead}
-                    >
-                      Tümünü Okundu İşaretle
-                    </button>
-                  </div>
-                  <DropdownMenuSeparator />
-                  {notificationsQuery.data && notificationsQuery.data.length === 0 && (
-                    <div className="px-1.5 py-2 text-sm text-muted-foreground">Bildirim yok</div>
-                  )}
-                  {notificationsQuery.data?.map((notification) => (
-                    <DropdownMenuItem key={notification.id} onClick={() => handleNotificationClick(notification)}>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="whitespace-normal">{notification.message}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(notification.created_at).toLocaleString('tr-TR')}
-                        </span>
-                      </div>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none hover:bg-accent data-popup-open:bg-accent"
-                >
-                  <div
-                    aria-hidden="true"
-                    className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
-                  >
-                    {initials}
-                  </div>
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {user?.name} {user?.surname ?? ''}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {user ? (ROLE_LABELS[user.role] ?? user.role) : ''}
-                    </span>
-                  </div>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="bottom" align="end" className="w-56">
-                  <DropdownMenuItem onClick={() => navigate('/profile')}>
-                    <User className="size-4" />
-                    Profilim
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem variant="destructive" onClick={logout}>
-                    <LogOut className="size-4" />
-                    Çıkış Yap
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
           </header>
 
           <main className="flex-1 overflow-auto px-8 py-6">
