@@ -140,8 +140,8 @@ export default function Requests() {
       )}
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5 sm:max-w-sm">
               <label htmlFor="requests-search" className="text-sm font-medium">
                 Ara
               </label>
@@ -153,75 +153,77 @@ export default function Requests() {
                 onChange={(event) => setQInput(event.target.value)}
               />
             </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-status" className="text-sm font-medium">
-                Durum
-              </label>
-              <Select
-                id="requests-status"
-                value={status}
-                onChange={handleStatusChange}
-                disabled={assignedToMe}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-request-type" className="text-sm font-medium">
-                Talep Tipi
-              </label>
-              <Select
-                id="requests-request-type"
-                value={requestTypeId}
-                onChange={handleRequestTypeChange}
-              >
-                <option value="">Tümü</option>
-                {visibleRequestTypes?.map((requestType) => (
-                  <option key={requestType.id} value={requestType.id}>
-                    {requestType.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-priority" className="text-sm font-medium">
-                Öncelik
-              </label>
-              <Select
-                id="requests-priority"
-                value={priority}
-                onChange={handlePriorityChange}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            {user?.role === 'DEPARTMENT_AUTHORITY' && (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="requests-assigned-to-me"
-                  checked={assignedToMe}
-                  onCheckedChange={handleAssignedToMeChange}
-                />
-                <label htmlFor="requests-assigned-to-me" className="text-sm font-medium">
-                  Bana Atananlar
+            <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-end">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-status" className="text-sm font-medium">
+                  Durum
                 </label>
+                <Select
+                  id="requests-status"
+                  value={status}
+                  onChange={handleStatusChange}
+                  disabled={assignedToMe}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
               </div>
-            )}
-            {hasActiveFilters && (
-              <Button type="button" variant="outline" onClick={handleClearFilters}>
-                Filtreleri Temizle
-              </Button>
-            )}
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-request-type" className="text-sm font-medium">
+                  Talep Tipi
+                </label>
+                <Select
+                  id="requests-request-type"
+                  value={requestTypeId}
+                  onChange={handleRequestTypeChange}
+                >
+                  <option value="">Tümü</option>
+                  {visibleRequestTypes?.map((requestType) => (
+                    <option key={requestType.id} value={requestType.id}>
+                      {requestType.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-priority" className="text-sm font-medium">
+                  Öncelik
+                </label>
+                <Select
+                  id="requests-priority"
+                  value={priority}
+                  onChange={handlePriorityChange}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              {user?.role === 'DEPARTMENT_AUTHORITY' && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="requests-assigned-to-me"
+                    checked={assignedToMe}
+                    onCheckedChange={handleAssignedToMeChange}
+                  />
+                  <label htmlFor="requests-assigned-to-me" className="text-sm font-medium">
+                    Bana Atananlar
+                  </label>
+                </div>
+              )}
+              {hasActiveFilters && (
+                <Button type="button" variant="outline" onClick={handleClearFilters}>
+                  Filtreleri Temizle
+                </Button>
+              )}
+            </div>
           </div>
 
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}

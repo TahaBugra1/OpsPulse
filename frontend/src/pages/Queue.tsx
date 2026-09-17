@@ -307,8 +307,8 @@ export default function Queue() {
     <div className="flex flex-col gap-4">
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5 sm:max-w-sm">
               <label htmlFor="queue-search" className="text-sm font-medium">
                 Ara
               </label>
@@ -320,62 +320,64 @@ export default function Queue() {
                 onChange={(event) => setQInput(event.target.value)}
               />
             </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-request-type" className="text-sm font-medium">
-                Talep Tipi
-              </label>
-              <Select
-                id="queue-request-type"
-                value={requestTypeId}
-                onChange={handleRequestTypeChange}
-              >
-                <option value="">Tümü</option>
-                {visibleRequestTypes?.map((requestType) => (
-                  <option key={requestType.id} value={requestType.id}>
-                    {requestType.name}
-                  </option>
-                ))}
-              </Select>
+            <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-end">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-request-type" className="text-sm font-medium">
+                  Talep Tipi
+                </label>
+                <Select
+                  id="queue-request-type"
+                  value={requestTypeId}
+                  onChange={handleRequestTypeChange}
+                >
+                  <option value="">Tümü</option>
+                  {visibleRequestTypes?.map((requestType) => (
+                    <option key={requestType.id} value={requestType.id}>
+                      {requestType.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-priority" className="text-sm font-medium">
+                  Öncelik
+                </label>
+                <Select
+                  id="queue-priority"
+                  value={priority}
+                  onChange={handlePriorityChange}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-date-from" className="text-sm font-medium">
+                  Başlangıç Tarihi
+                </label>
+                <Input
+                  id="queue-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={handleDateFromChange}
+                />
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-date-to" className="text-sm font-medium">
+                  Bitiş Tarihi
+                </label>
+                <Input id="queue-date-to" type="date" value={dateTo} onChange={handleDateToChange} />
+              </div>
+              {hasActiveFilters && (
+                <Button type="button" variant="outline" onClick={handleClearFilters}>
+                  Filtreleri Temizle
+                </Button>
+              )}
             </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-priority" className="text-sm font-medium">
-                Öncelik
-              </label>
-              <Select
-                id="queue-priority"
-                value={priority}
-                onChange={handlePriorityChange}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-date-from" className="text-sm font-medium">
-                Başlangıç Tarihi
-              </label>
-              <Input
-                id="queue-date-from"
-                type="date"
-                value={dateFrom}
-                onChange={handleDateFromChange}
-              />
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-date-to" className="text-sm font-medium">
-                Bitiş Tarihi
-              </label>
-              <Input id="queue-date-to" type="date" value={dateTo} onChange={handleDateToChange} />
-            </div>
-            {hasActiveFilters && (
-              <Button type="button" variant="outline" onClick={handleClearFilters}>
-                Filtreleri Temizle
-              </Button>
-            )}
           </div>
 
           {dateRangeError && (

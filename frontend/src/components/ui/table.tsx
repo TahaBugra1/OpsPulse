@@ -19,6 +19,14 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   )
 }
 
+// NOTE: sticky positioning was tried here (`sticky top-0 z-10 bg-card`) and reverted --
+// the wrapping `table-container` div's `overflow-x-auto` forces its computed
+// `overflow-y` to `auto` too (per the CSS Overflow spec), which makes IT the sticky
+// containing block instead of the page-level scroll container (`<main>` in AppShell) --
+// and since table-container never itself scrolls vertically, the header just scrolls
+// away with the page instead of sticking. A real fix needs each table to own a bounded,
+// independently-scrolling viewport (a UX change worth a deliberate decision, not a
+// silent side effect here), not just a className tweak on this shared component.
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
@@ -83,7 +91,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+        "px-2 py-1.5 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
