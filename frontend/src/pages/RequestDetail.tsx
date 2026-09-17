@@ -339,7 +339,7 @@ export default function RequestDetail() {
                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">{request.description}</p>
               </div>
 
-              <dl className="grid grid-cols-2 gap-3 text-sm">
+              <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-sm">
                 <dt className="text-muted-foreground">Durum</dt>
                 <dd>
                   <StatusBadge status={request.status} />
@@ -439,7 +439,7 @@ export default function RequestDetail() {
                 </div>
               )}
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-4">
                 <h3 className="text-base font-medium">Yorumlar</h3>
                 {commentsQuery.data && commentsQuery.data.length === 0 && (
                   <p className="text-sm text-muted-foreground">Henüz yorum yok</p>
@@ -545,7 +545,7 @@ export default function RequestDetail() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-4">
                 <h3 className="text-base font-medium">Geçmiş</h3>
                 {historyQuery.isPending && <p className="text-sm text-muted-foreground">Yükleniyor...</p>}
                 {historyQuery.isError && (
@@ -564,7 +564,7 @@ export default function RequestDetail() {
                 {historyQuery.data && historyQuery.data.length > 0 && (
                   <ul className="flex flex-col gap-3">
                     {historyQuery.data.map((entry) => (
-                      <li key={entry.id} className="rounded-md border p-3 text-sm">
+                      <li key={entry.id} className="rounded-lg border p-3 text-sm">
                         <div className="mb-1 flex items-center justify-between">
                           <span>{formatHistoryEntry(entry)}</span>
                           <span className="text-xs text-muted-foreground">
@@ -721,7 +721,7 @@ function CommentItem({
 
   if (comment.is_deleted) {
     return (
-      <li className="rounded-md border p-3 text-sm">
+      <li className="rounded-lg border p-3 text-sm">
         <div className="mb-1 flex items-center justify-between">
           <span className="font-medium">{comment.author_name}</span>
           <span className="text-xs text-muted-foreground">
@@ -737,7 +737,7 @@ function CommentItem({
   const isEdited = comment.updated_at !== comment.created_at
 
   return (
-    <li className="flex items-start gap-3 rounded-md border p-3 text-sm">
+    <li className="flex items-start gap-3 rounded-lg border p-3 text-sm">
       {isAdmin && (
         <Checkbox
           aria-label="Yorumu seç"
