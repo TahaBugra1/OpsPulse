@@ -58,6 +58,53 @@ function registerCleanup(t, employee, requestIds) {
   });
 }
 
+// Creates a brand-new, uniquely-named throwaway department (optionally with a
+// throwaway request_type under it) plus a throwaway DEPARTMENT_AUTHORITY
+// scoped to it, and logs that authority in. Because the department is freshly
+// created inside the test itself, it is structurally guaranteed to have zero
+// pre-existing requests and exactly one DEPARTMENT_AUTHORITY — unlike relying
+// on a seeded department (Finance/HR/IT) staying empty or an authority count
+// staying fixed, which demo data or future seed changes can silently break.
+// Registers its own cleanup via t.after (department/request_type/user, in FK
+// order), so callers do not need to clean these up themselves.
+async function createThrowawayDepartmentWithAuthority(t, { withRequestType = false } = {}) {
+  const deptRes = await pool.query(
+    'INSERT INTO departments (name) VALUES ($1) RETURNING id, name',
+    [`Throwaway Analytics Dept ${randomUUID()}`]
+  );
+  const departmentId = deptRes.rows[0].id;
+  const departmentName = deptRes.rows[0].name;
+
+  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
+  const authorityEmail = `throwaway-authority-${randomUUID()}@opspulse.com`;
+  const authorityInsert = await pool.query(
+    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
+    ['Test', 'ThrowawayAuthority', authorityEmail, pwRow.rows[0].password_hash, departmentId]
+  );
+  const authorityId = authorityInsert.rows[0].id;
+
+  let requestTypeId = null;
+  if (withRequestType) {
+    const typeRes = await pool.query(
+      'INSERT INTO request_types (name, department_id) VALUES ($1, $2) RETURNING id',
+      [`Throwaway Analytics Type ${randomUUID()}`, departmentId]
+    );
+    requestTypeId = typeRes.rows[0].id;
+  }
+
+  const login = await request(app).post('/api/auth/login').send({ email: authorityEmail, password: 'sifre1234' });
+  assert.equal(login.status, 200, JSON.stringify(login.body));
+
+  t.after(async () => {
+    if (requestTypeId) await pool.query('DELETE FROM request_types WHERE id = $1', [requestTypeId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [authorityId]);
+    await pool.query('DELETE FROM departments WHERE id = $1', [departmentId]);
+  });
+
+  return { departmentId, departmentName, authorityId, authorityToken: login.body.token, requestTypeId };
+}
+
 async function createRequestAs(employeeToken, requestTypeId, priority) {
   const body = {
     title: 'Analytics test request',
@@ -207,31 +254,42 @@ test('GET /api/analytics/summary - EMPLOYEE gets 403', async (t) => {
 });
 
 // AC4: GET /api/analytics/sla with a known on-time completed request (HIGH priority, 4h window).
-// Uses the HR department scope, kept clean of other completed requests within this file (see AC5's
-// note: the LOW-priority late-completion test below intentionally uses HR too, but only as the
-// single completed request present at the time of ITS assertion; sequential test execution plus
-// per-test cleanup means the two do not overlap).
+// Uses a brand-new throwaway department (with its own throwaway request type and authority)
+// created just for this test, rather than a seeded department like HR — a seeded department's
+// request history can never be relied on to stay clean (demo data or other tests can add
+// completed requests to it at any time), whereas a freshly-created department is structurally
+// guaranteed to have zero completed requests other than the one this test creates.
 test('GET /api/analytics/sla - reflects a known on-time completed request', async (t) => {
+  const dept = await createThrowawayDepartmentWithAuthority(t, { withRequestType: true });
   const employee = await registerEmployee();
-  const requestId = await createAndCompleteRequest(employee.token, hrAuthorityToken, leaveRequestTypeId, 'HIGH');
-  registerCleanup(t, employee, [requestId]);
+  const requestId = await createAndCompleteRequest(employee.token, dept.authorityToken, dept.requestTypeId, 'HIGH');
 
   const slaRes = await request(app)
     .get('/api/analytics/sla')
-    .set('Authorization', `Bearer ${hrAuthorityToken}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(slaRes.status, 200, JSON.stringify(slaRes.body));
-  assert.ok(slaRes.body.compliance_rate >= 0 && slaRes.body.compliance_rate <= 100);
-  // A same-second test run resolves in a fraction of an hour, which can legitimately round to
-  // 0.00 - assert it's a small non-negative number rather than requiring it to be > 0.
+  // This throwaway department has exactly one completed request ever (itself),
+  // so compliance is exactly 100 and resolution time is near-instant.
+  assert.equal(slaRes.body.compliance_rate, 100);
   assert.ok(slaRes.body.avg_resolution_hours >= 0 && slaRes.body.avg_resolution_hours < 1);
+
+  // Clean up the request/employee inline (rather than via registerCleanup's t.after) so this
+  // completes before the throwaway department's own t.after runs: node:test runs t.after hooks
+  // in registration order, and the department helper's cleanup (registered first, when the
+  // department was created above) deletes the throwaway request_type, which would violate its
+  // FK from this request if the request weren't already gone by then.
+  await deleteRequestCascade(requestId);
+  await deleteUser(employee.id);
 });
 
 // AC5: GET /api/analytics/sla - LOW priority request completed but pushed past its sla_due_at via
 // direct SQL manipulation of the request_history completion timestamp -> counts as NOT on-time.
+// Uses its own throwaway department (see the previous test's comment) so this is guaranteed to be
+// the only completed request that department has ever had.
 test('GET /api/analytics/sla - a late completion is not counted as on-time', async (t) => {
+  const dept = await createThrowawayDepartmentWithAuthority(t, { withRequestType: true });
   const employee = await registerEmployee();
-  const requestId = await createAndCompleteRequest(employee.token, hrAuthorityToken, leaveRequestTypeId, 'LOW');
-  registerCleanup(t, employee, [requestId]);
+  const requestId = await createAndCompleteRequest(employee.token, dept.authorityToken, dept.requestTypeId, 'LOW');
 
   // Push the STATUS_CHANGED -> COMPLETED history row's created_at to just past sla_due_at.
   const slaDueRow = await pool.query('SELECT sla_due_at FROM requests WHERE id = $1', [requestId]);
@@ -245,46 +303,38 @@ test('GET /api/analytics/sla - a late completion is not counted as on-time', asy
 
   const slaRes = await request(app)
     .get('/api/analytics/sla')
-    .set('Authorization', `Bearer ${hrAuthorityToken}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(slaRes.status, 200, JSON.stringify(slaRes.body));
-  // This is the only completed HR request left standing after prior tests' cleanup ran, so
-  // compliance_rate should be exactly 0 (one completed request, late).
+  // This throwaway department has exactly one completed request ever (itself, late), so compliance is exactly 0.
   assert.equal(slaRes.body.compliance_rate, 0);
+
+  // Clean up the request/employee inline (rather than via registerCleanup's t.after) so this
+  // completes before the throwaway department's own t.after runs: node:test runs t.after hooks
+  // in registration order, and the department helper's cleanup (registered first, when the
+  // department was created above) deletes the throwaway request_type, which would violate its
+  // FK from this request if the request weren't already gone by then.
+  await deleteRequestCascade(requestId);
+  await deleteUser(employee.id);
 });
 
 // AC6: GET /api/analytics/sla for a department with zero completed requests -> zeroed, 200, no error.
 test('GET /api/analytics/sla - department with zero completed requests returns zeroed payload', async (t) => {
-  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
-  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
-  const financeDeptId = financeDept.rows[0].id;
-
-  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
-  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
-  const financeAuthorityInsert = await pool.query(
-    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
-     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
-    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
-  );
-  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
-  t.after(async () => {
-    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
-  });
-
-  const financeLogin = await request(app)
-    .post('/api/auth/login')
-    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
-  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+  const dept = await createThrowawayDepartmentWithAuthority(t);
 
   const slaRes = await request(app)
     .get('/api/analytics/sla')
-    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(slaRes.status, 200, JSON.stringify(slaRes.body));
   assert.deepEqual(slaRes.body, { compliance_rate: 0, avg_resolution_hours: null });
 });
 
 // AC7: GET /api/analytics/workload as ADMIN -> array with a row for every department, including
-// the empty Finance department with all-zero counts (proves the LEFT JOIN behavior).
-test('GET /api/analytics/workload - ADMIN sees every department including empty Finance with zero counts', async (t) => {
+// a freshly-created empty department with all-zero counts (proves the LEFT JOIN behavior). Uses a
+// throwaway department created in this test rather than assuming a seeded department (e.g.
+// Finance) stays empty, which demo data or future seed changes can silently break.
+test('GET /api/analytics/workload - ADMIN sees every department including a freshly-created empty one with zero counts', async (t) => {
+  const dept = await createThrowawayDepartmentWithAuthority(t);
+
   const res = await request(app)
     .get('/api/analytics/workload')
     .set('Authorization', `Bearer ${adminToken}`);
@@ -298,9 +348,9 @@ test('GET /api/analytics/workload - ADMIN sees every department including empty 
     assert.ok(returnedNames.includes(name), `missing department ${name} in workload response`);
   }
 
-  const financeRow = res.body.find((r) => r.department_name === 'Finance');
-  assert.deepEqual(financeRow, {
-    department_name: 'Finance',
+  const throwawayRow = res.body.find((r) => r.department_name === dept.departmentName);
+  assert.deepEqual(throwawayRow, {
+    department_name: dept.departmentName,
     open: 0,
     assigned: 0,
     in_progress: 0,
@@ -324,35 +374,16 @@ test('GET /api/analytics/workload - DEPARTMENT_AUTHORITY sees exactly one row fo
 // -> array of length 1, that one row all-zero (the HR-authority AC8 test above only covers a
 // department WITH activity; this covers the zero-request case, mirroring AC6's zeroed-sla test).
 test('GET /api/analytics/workload - DEPARTMENT_AUTHORITY of a zero-request department sees one all-zero row', async (t) => {
-  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
-  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
-  const financeDeptId = financeDept.rows[0].id;
-
-  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
-  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
-  const financeAuthorityInsert = await pool.query(
-    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
-     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
-    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
-  );
-  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
-  t.after(async () => {
-    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
-  });
-
-  const financeLogin = await request(app)
-    .post('/api/auth/login')
-    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
-  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+  const dept = await createThrowawayDepartmentWithAuthority(t);
 
   const workloadRes = await request(app)
     .get('/api/analytics/workload')
-    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(workloadRes.status, 200, JSON.stringify(workloadRes.body));
   assert.ok(Array.isArray(workloadRes.body));
   assert.equal(workloadRes.body.length, 1);
   assert.deepEqual(workloadRes.body[0], {
-    department_name: 'Finance',
+    department_name: dept.departmentName,
     open: 0,
     assigned: 0,
     in_progress: 0,
@@ -479,31 +510,12 @@ test('GET /api/analytics/distribution - days=1 and days=90 boundary values are a
 // status/priority still show all 5/3 entries at 0, department shows exactly 1 row (Finance) at 0,
 // volumeOverTime has all `days` entries present, all at 0.
 test('GET /api/analytics/distribution - DEPARTMENT_AUTHORITY of a zero-request department sees all-zero breakdown', async (t) => {
-  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
-  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
-  const financeDeptId = financeDept.rows[0].id;
-
-  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
-  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
-  const financeAuthorityInsert = await pool.query(
-    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
-     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
-    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
-  );
-  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
-  t.after(async () => {
-    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
-  });
-
-  const financeLogin = await request(app)
-    .post('/api/auth/login')
-    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
-  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+  const dept = await createThrowawayDepartmentWithAuthority(t);
 
   const days = 5;
   const res = await request(app)
     .get(`/api/analytics/distribution?days=${days}`)
-    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(res.status, 200, JSON.stringify(res.body));
 
   assert.equal(res.body.status.length, 5);
@@ -513,7 +525,7 @@ test('GET /api/analytics/distribution - DEPARTMENT_AUTHORITY of a zero-request d
   assert.ok(res.body.priority.every((r) => r.count === 0));
 
   assert.equal(res.body.department.length, 1);
-  assert.deepEqual(res.body.department[0], { department: 'Finance', count: 0 });
+  assert.deepEqual(res.body.department[0], { department: dept.departmentName, count: 0 });
 
   assert.equal(res.body.volumeOverTime.length, days);
   assert.ok(res.body.volumeOverTime.every((r) => r.count === 0));
@@ -592,17 +604,22 @@ test('GET /api/analytics/bottlenecks - EMPLOYEE gets 403', async (t) => {
   assert.equal(res.status, 403);
 });
 
-// AC5: GET /api/analytics/bottlenecks as DEPARTMENT_AUTHORITY (seeded IT authority) -> scoped to
-// own department only: slaBreachByDepartment has exactly 1 entry ('IT'), authorityWorkload has
-// exactly 1 entry (the seeded IT authority is the only DEPARTMENT_AUTHORITY in IT).
+// AC5: GET /api/analytics/bottlenecks as DEPARTMENT_AUTHORITY -> scoped to own department only:
+// slaBreachByDepartment has exactly 1 entry (own department), authorityWorkload has exactly 1
+// entry. Uses a throwaway department (with its own single throwaway authority) rather than the
+// seeded IT authority — seed.js now permanently provisions a second IT authority
+// (it.authority2@opspulse.com), so "IT has exactly 1 DEPARTMENT_AUTHORITY" is no longer true; a
+// freshly-created department is structurally guaranteed to have exactly one.
 test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY is scoped to own department only', async (t) => {
+  const dept = await createThrowawayDepartmentWithAuthority(t);
+
   const res = await request(app)
     .get('/api/analytics/bottlenecks')
-    .set('Authorization', `Bearer ${itAuthorityToken}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(res.status, 200, JSON.stringify(res.body));
 
   assert.equal(res.body.slaBreachByDepartment.length, 1);
-  assert.equal(res.body.slaBreachByDepartment[0].department, 'IT');
+  assert.equal(res.body.slaBreachByDepartment[0].department, dept.departmentName);
 
   assert.equal(res.body.authorityWorkload.length, 1);
 });
@@ -613,41 +630,22 @@ test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY is scoped to own dep
 // entry with active_count 0 (AC6), and all 3 stageDurations entries are null (AC7, no request in
 // Finance has ever made any stage transition).
 test('GET /api/analytics/bottlenecks - DEPARTMENT_AUTHORITY of a zero-request department gets an all-zero/null payload', async (t) => {
-  // Insert a throwaway DEPARTMENT_AUTHORITY scoped to Finance (no seeded authority exists for it).
-  const financeDept = await pool.query("SELECT id FROM departments WHERE name = 'Finance'");
-  const financeDeptId = financeDept.rows[0].id;
-
-  const pwRow = await pool.query("SELECT password_hash FROM users WHERE email = 'it.authority@opspulse.com'");
-  const financeAuthorityEmail = `finance-authority-${randomUUID()}@opspulse.com`;
-  const financeAuthorityInsert = await pool.query(
-    `INSERT INTO users (name, surname, email, password_hash, role, department_id)
-     VALUES ($1, $2, $3, $4, 'DEPARTMENT_AUTHORITY', $5) RETURNING id`,
-    ['Test', 'FinanceAuthority', financeAuthorityEmail, pwRow.rows[0].password_hash, financeDeptId]
-  );
-  const financeAuthorityId = financeAuthorityInsert.rows[0].id;
-  t.after(async () => {
-    await pool.query('DELETE FROM users WHERE id = $1', [financeAuthorityId]);
-  });
-
-  const financeLogin = await request(app)
-    .post('/api/auth/login')
-    .send({ email: financeAuthorityEmail, password: 'sifre1234' });
-  assert.equal(financeLogin.status, 200, JSON.stringify(financeLogin.body));
+  const dept = await createThrowawayDepartmentWithAuthority(t);
 
   const res = await request(app)
     .get('/api/analytics/bottlenecks')
-    .set('Authorization', `Bearer ${financeLogin.body.token}`);
+    .set('Authorization', `Bearer ${dept.authorityToken}`);
   assert.equal(res.status, 200, JSON.stringify(res.body));
 
   // AC8: whole response well-formed, no crash, no missing keys.
   assert.equal(res.body.slaBreachByDepartment.length, 1);
-  assert.deepEqual(res.body.slaBreachByDepartment[0], { department: 'Finance', count: 0 });
+  assert.deepEqual(res.body.slaBreachByDepartment[0], { department: dept.departmentName, count: 0 });
 
   // AC6: authorityWorkload has exactly 1 entry with active_count 0 (not missing).
   assert.equal(res.body.authorityWorkload.length, 1);
   assert.equal(res.body.authorityWorkload[0].active_count, 0);
 
-  // AC7: all 3 stageDurations entries are null (no request in Finance has ever made any transition).
+  // AC7: all 3 stageDurations entries are null (no request in this department has ever made any transition).
   assert.equal(res.body.stageDurations.length, 3);
   assert.ok(res.body.stageDurations.every((r) => r.avg_hours === null));
 });
