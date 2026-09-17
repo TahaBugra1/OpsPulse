@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { StatusBadge } from '@/components/ui/status-badge'
 import {
   Table,
   TableBody,
@@ -291,7 +292,7 @@ export default function Requests() {
                       <TableCell>{request.title}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
+                          <StatusBadge status={request.status} />
                           {request.is_overdue && <Badge variant="destructive">Gecikmiş</Badge>}
                         </div>
                       </TableCell>

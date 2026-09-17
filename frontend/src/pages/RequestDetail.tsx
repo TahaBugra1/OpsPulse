@@ -19,6 +19,7 @@ import {
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { useAuth } from '@/context/AuthContext'
 import { usePageTitle } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
@@ -341,7 +342,7 @@ export default function RequestDetail() {
               <dl className="grid grid-cols-2 gap-3 text-sm">
                 <dt className="text-muted-foreground">Durum</dt>
                 <dd>
-                  <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
+                  <StatusBadge status={request.status} />
                 </dd>
 
                 <dt className="text-muted-foreground">Öncelik</dt>
