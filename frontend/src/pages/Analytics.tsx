@@ -30,6 +30,7 @@ import {
   useEmployeeSummary,
 } from '@/lib/analytics'
 import { PRIORITY_LABELS, STATUS_LABELS } from '@/lib/requests'
+import { cn } from '@/lib/utils'
 
 // One series per chart, so each config only needs the `count` key. The color
 // is read from the theme token — never a literal color in the JSX below.
@@ -64,6 +65,20 @@ const SLA_BREACH_TYPE_CONFIG = {
 const STAGE_DURATION_CONFIG = {
   avg_hours: { label: 'Saat', color: 'var(--chart-1)' },
 } satisfies ChartConfig
+
+function StatTile({ label, value, tone }: { label: string; value: number; tone?: 'destructive' }) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1 rounded-lg border p-3',
+        tone === 'destructive' ? 'border-destructive/20 bg-destructive/10' : 'border-border',
+      )}
+    >
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className={cn('text-2xl font-semibold', tone === 'destructive' && 'text-destructive')}>{value}</span>
+    </div>
+  )
+}
 
 export default function Analytics() {
   const { user } = useAuth()
@@ -105,30 +120,12 @@ function EmployeeAnalytics() {
 
           {!summaryQuery.isPending && !summaryQuery.isError && summaryQuery.data && (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.OPEN}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_open}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.ASSIGNED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_assigned}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.IN_PROGRESS}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_in_progress}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.COMPLETED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_completed}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.REJECTED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_rejected}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">Gecikmiş</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_overdue}</span>
-              </div>
+              <StatTile label={STATUS_LABELS.OPEN} value={summaryQuery.data.total_open} />
+              <StatTile label={STATUS_LABELS.ASSIGNED} value={summaryQuery.data.total_assigned} />
+              <StatTile label={STATUS_LABELS.IN_PROGRESS} value={summaryQuery.data.total_in_progress} />
+              <StatTile label={STATUS_LABELS.COMPLETED} value={summaryQuery.data.total_completed} />
+              <StatTile label={STATUS_LABELS.REJECTED} value={summaryQuery.data.total_rejected} />
+              <StatTile label="Gecikmiş" value={summaryQuery.data.total_overdue} tone="destructive" />
             </div>
           )}
         </CardContent>
@@ -214,30 +211,12 @@ function FullAnalytics() {
 
           {!summaryQuery.isPending && !summaryQuery.isError && summaryQuery.data && (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.OPEN}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_open}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.ASSIGNED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_assigned}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.IN_PROGRESS}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_in_progress}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.COMPLETED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_completed}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">{STATUS_LABELS.REJECTED}</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_rejected}</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-sm text-muted-foreground">Gecikmiş</span>
-                <span className="text-2xl font-semibold">{summaryQuery.data.total_overdue}</span>
-              </div>
+              <StatTile label={STATUS_LABELS.OPEN} value={summaryQuery.data.total_open} />
+              <StatTile label={STATUS_LABELS.ASSIGNED} value={summaryQuery.data.total_assigned} />
+              <StatTile label={STATUS_LABELS.IN_PROGRESS} value={summaryQuery.data.total_in_progress} />
+              <StatTile label={STATUS_LABELS.COMPLETED} value={summaryQuery.data.total_completed} />
+              <StatTile label={STATUS_LABELS.REJECTED} value={summaryQuery.data.total_rejected} />
+              <StatTile label="Gecikmiş" value={summaryQuery.data.total_overdue} tone="destructive" />
             </div>
           )}
         </CardContent>
