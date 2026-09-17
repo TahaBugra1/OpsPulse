@@ -7,17 +7,22 @@ import {
   PRIORITY_LABELS,
   type RequestListItem,
   STATUS_LABELS,
+  useActivateRequestType,
   useAddComment,
+  useAllRequestTypes,
   useBulkQueueAction,
   useChangePriority,
   useChangeRequestStatus,
   useClaimRequest,
   useCreateRequest,
+  useCreateRequestType,
+  useDeactivateRequestType,
   useOpenQueue,
   useRequest,
   useRequestComments,
   useRequests,
   useRequestTypes,
+  useUpdateRequestType,
 } from './requests'
 
 function jsonResponse(status: number, body: unknown) {
@@ -180,6 +185,110 @@ describe('requests lib', () => {
     const [url, options] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toContain('/api/request-types')
     expect(options?.method).toBe('GET')
+  })
+
+  // ADMIN catalog: useAllRequestTypes() calls GET /api/request-types/all and
+  // returns the list unfiltered, including an inactive item (proves the hook
+  // doesn't filter anything client-side - that's the server's job).
+  it('useAllRequestTypes calls GET /api/request-types/all and returns every item including inactive ones', async () => {
+    const types = [
+      { id: 'type-1', name: 'Donanım Arızası', department_id: 'dept-1', is_active: true },
+      { id: 'type-2', name: 'Eski Tür', department_id: 'dept-1', is_active: false },
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, types))
+
+    const { result } = renderHook(() => useAllRequestTypes(), { wrapper: wrapper() })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(types)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types/all')
+    expect(options?.method).toBe('GET')
+  })
+
+  // AC2: useCreateRequestType()'s mutate calls POST /api/request-types with { name, department_id }
+  it('useCreateRequestType calls POST /api/request-types with the given body and resolves with the response', async () => {
+    const created = { id: 'type-3', name: 'Yeni Tür', department_id: 'dept-1', is_active: true }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(201, created))
+
+    const { result } = renderHook(() => useCreateRequestType(), { wrapper: wrapper() })
+
+    const body = { name: 'Yeni Tür', department_id: 'dept-1' }
+
+    act(() => {
+      result.current.mutate(body)
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(created)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(options?.body as string)).toEqual(body)
+  })
+
+  // AC5: useUpdateRequestType(id)'s mutate calls PATCH /api/request-types/:id with { name, department_id }
+  it('useUpdateRequestType calls PATCH /api/request-types/:id with the given body and resolves with the response', async () => {
+    const updated = { id: 'type-1', name: 'Güncellenmiş', department_id: 'dept-2', is_active: true }
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, updated))
+
+    const { result } = renderHook(() => useUpdateRequestType('type-1'), { wrapper: wrapper() })
+
+    const body = { name: 'Güncellenmiş', department_id: 'dept-2' }
+
+    act(() => {
+      result.current.mutate(body)
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    expect(result.current.data).toEqual(updated)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types/type-1')
+    expect(options?.method).toBe('PATCH')
+    expect(JSON.parse(options?.body as string)).toEqual(body)
+  })
+
+  // AC7: useDeactivateRequestType()'s mutate calls PATCH /api/request-types/:id/deactivate with NO body
+  it('useDeactivateRequestType calls PATCH /api/request-types/:id/deactivate for the given id', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(200, { id: 'type-1', name: 'Donanım Arızası', department_id: 'dept-1', is_active: false }),
+    )
+
+    const { result } = renderHook(() => useDeactivateRequestType(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate('type-1')
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types/type-1/deactivate')
+    expect(options?.method).toBe('PATCH')
+    expect(options?.body).toBeUndefined()
+  })
+
+  // AC8: useActivateRequestType()'s mutate calls PATCH /api/request-types/:id/activate with NO body
+  it('useActivateRequestType calls PATCH /api/request-types/:id/activate for the given id', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse(200, { id: 'type-1', name: 'Donanım Arızası', department_id: 'dept-1', is_active: true }),
+    )
+
+    const { result } = renderHook(() => useActivateRequestType(), { wrapper: wrapper() })
+
+    act(() => {
+      result.current.mutate('type-1')
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(String(url)).toContain('/api/request-types/type-1/activate')
+    expect(options?.method).toBe('PATCH')
+    expect(options?.body).toBeUndefined()
   })
 
   // AC3: useCreateRequest()'s mutate calls POST /api/requests with the given body and resolves with the response

@@ -29,9 +29,9 @@ function nonJsonResponse(status: number) {
 }
 
 const departments: Department[] = [
-  { id: 'dept-finance', name: 'Finance' },
-  { id: 'dept-hr', name: 'HR' },
-  { id: 'dept-it', name: 'IT' },
+  { id: 'dept-finance', name: 'Finance', is_active: true },
+  { id: 'dept-hr', name: 'HR', is_active: true },
+  { id: 'dept-it', name: 'IT', is_active: true },
 ]
 
 const createdUser: AuthUser = {

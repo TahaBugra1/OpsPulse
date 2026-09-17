@@ -41,8 +41,8 @@ function seedSession(user: AuthUser = adminUser) {
 }
 
 const fakeDepartments: Department[] = [
-  { id: 'dept-1', name: 'HR' },
-  { id: 'dept-2', name: 'IT' },
+  { id: 'dept-1', name: 'HR', is_active: true },
+  { id: 'dept-2', name: 'IT', is_active: true },
 ]
 
 function makeUserRow(overrides: Partial<AdminUserListItem> = {}): AdminUserListItem {

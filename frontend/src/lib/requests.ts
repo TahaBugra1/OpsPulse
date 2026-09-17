@@ -31,6 +31,10 @@ export interface RequestType {
   id: string
   name: string
   department_id: string
+  // Present only from useAllRequestTypes() (the ADMIN catalog listing) — the
+  // EMPLOYEE-facing useRequestTypes() below never includes it, so this is
+  // optional rather than widening that hook's response shape.
+  is_active?: boolean
 }
 
 export interface RequestComment {
@@ -175,6 +179,41 @@ export function useRequestTypes() {
   return useQuery({
     queryKey: ['request-types'],
     queryFn: () => apiGet<RequestType[]>('/api/request-types'),
+  })
+}
+
+// ADMIN-only: every request type including inactive ones. useRequestTypes()
+// above is UNCHANGED and stays the one every role calls (NewRequest.tsx etc.)
+export function useAllRequestTypes() {
+  return useQuery({
+    queryKey: ['request-types', 'all'],
+    queryFn: () => apiGet<RequestType[]>('/api/request-types/all'),
+  })
+}
+
+export function useCreateRequestType() {
+  return useMutation({
+    mutationFn: (body: { name: string; department_id: string }) =>
+      apiPost<RequestType>('/api/request-types', body),
+  })
+}
+
+export function useUpdateRequestType(id: string) {
+  return useMutation({
+    mutationFn: (body: { name: string; department_id: string }) =>
+      apiPatch<RequestType>(`/api/request-types/${id}`, body),
+  })
+}
+
+export function useDeactivateRequestType() {
+  return useMutation({
+    mutationFn: (id: string) => apiPatch<RequestType>(`/api/request-types/${id}/deactivate`),
+  })
+}
+
+export function useActivateRequestType() {
+  return useMutation({
+    mutationFn: (id: string) => apiPatch<RequestType>(`/api/request-types/${id}/activate`),
   })
 }
 

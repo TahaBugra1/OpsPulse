@@ -63,6 +63,17 @@ export const createUserSchema = z.object({
 
 export type CreateUserFormValues = z.infer<typeof createUserSchema>
 
+export const createDepartmentSchema = z.object({
+  name: z.string().trim().min(1, 'Departman adı zorunlu').max(100, 'Departman adı en fazla 100 karakter olabilir'),
+})
+export type CreateDepartmentFormValues = z.infer<typeof createDepartmentSchema>
+
+export const createRequestTypeSchema = z.object({
+  name: z.string().trim().min(1, 'Talep türü adı zorunlu').max(150, 'Talep türü adı en fazla 150 karakter olabilir'),
+  department_id: z.string().min(1, 'Departman seçilmeli'),
+})
+export type CreateRequestTypeFormValues = z.infer<typeof createRequestTypeSchema>
+
 // new_password_confirm is frontend-only; requests send current_password + new_password.
 export const changePasswordSchema = z
   .object({

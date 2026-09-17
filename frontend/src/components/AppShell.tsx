@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, User, Users, type LucideIcon } from 'lucide-react'
+import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, Tags, User, Users, type LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
@@ -39,6 +39,7 @@ const NAV_ITEMS_BY_ROLE: Record<string, { to: string; label: string; icon: Lucid
     { to: '/requests', label: 'Talepler', icon: ClipboardList },
     { to: '/queue', label: 'Kuyruk', icon: Inbox },
     { to: '/admin/users', label: 'Kullanıcılar', icon: Users },
+    { to: '/admin/catalog', label: 'Katalog', icon: Tags },
   ],
 }
 

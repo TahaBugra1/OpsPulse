@@ -199,7 +199,7 @@ export default function AdminUsers() {
                         aria-invalid={!!fieldState.error}
                       >
                         <option value="">Seçiniz</option>
-                        {departments.map((department) => (
+                        {departments.filter((department) => department.is_active).map((department) => (
                           <option key={department.id} value={department.id}>
                             {department.name}
                           </option>

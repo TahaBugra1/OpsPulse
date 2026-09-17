@@ -190,13 +190,13 @@ describe('AppShell', () => {
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
-  // AC4: ADMIN sidebar shows all four, in "Genel Bakış", "Talepler", "Kuyruk", "Kullanıcılar" order
-  it('shows "Talepler", "Kuyruk", "Kullanıcılar" in that order for an ADMIN user', () => {
+  // AC4: ADMIN sidebar shows all five, in "Genel Bakış", "Talepler", "Kuyruk", "Kullanıcılar", "Katalog" order
+  it('shows "Talepler", "Kuyruk", "Kullanıcılar", "Katalog" in that order for an ADMIN user', () => {
     renderShell({ ...fakeUser, role: 'ADMIN' })
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Talepler', 'Kuyruk', 'Kullanıcılar'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Talepler', 'Kuyruk', 'Kullanıcılar', 'Katalog'])
   })
 
   // AC5: clicking "Çıkış Yap" calls logout (observed via cleared session storage)

@@ -8,6 +8,7 @@ import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedR
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
+import AdminCatalog from '@/pages/AdminCatalog'
 import AdminUsers from '@/pages/AdminUsers'
 import Analytics from '@/pages/Analytics'
 import ChangePassword from '@/pages/ChangePassword'
@@ -63,6 +64,7 @@ function App() {
                     <Route path="/queue" element={<Queue />} />
                     <Route path="/team" element={<Team />} />
                     <Route path="/admin/users" element={<AdminUsers />} />
+                    <Route path="/admin/catalog" element={<AdminCatalog />} />
                   </Route>
                 </Route>
                 {/* Deliberately OUTSIDE ProtectedRoute: ProtectedRoute is what
