@@ -1,10 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, Tags, User, Users, type LucideIcon } from 'lucide-react'
+import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, Moon, Tags, User, Users, type LucideIcon } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -57,6 +59,7 @@ function HeaderTitle() {
 
 export function AppShell() {
   const { user, logout } = useAuth()
+  const { resolvedTheme, setTheme } = useTheme()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const socket = useSocket()
@@ -211,6 +214,13 @@ export function AppShell() {
                   <User className="size-4" />
                   Profilim
                 </DropdownMenuItem>
+                <DropdownMenuCheckboxItem
+                  checked={resolvedTheme === 'dark'}
+                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
+                >
+                  <Moon className="size-4" />
+                  Karanlık Mod
+                </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={logout}>
                   <LogOut className="size-4" />
