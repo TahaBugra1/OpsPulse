@@ -1,12 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, Moon, Tags, User, Users, type LucideIcon } from 'lucide-react'
+import { Activity, Bell, ClipboardList, Inbox, LayoutDashboard, LogOut, Moon, Sun, Tags, User, Users, type LucideIcon } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -214,13 +213,6 @@ export function AppShell() {
                   <User className="size-4" />
                   Profilim
                 </DropdownMenuItem>
-                <DropdownMenuCheckboxItem
-                  checked={resolvedTheme === 'dark'}
-                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
-                >
-                  <Moon className="size-4" />
-                  Karanlık Mod
-                </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" onClick={logout}>
                   <LogOut className="size-4" />
@@ -232,8 +224,16 @@ export function AppShell() {
         </aside>
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="flex h-14 shrink-0 items-center border-b border-border bg-background px-8">
+          <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-8">
             <HeaderTitle />
+            <button
+              type="button"
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              aria-label={resolvedTheme === 'dark' ? 'Aydınlık moda geç' : 'Karanlık moda geç'}
+              className="flex size-9 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground"
+            >
+              {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </button>
           </header>
 
           <main className="flex-1 overflow-auto px-8 py-6">
