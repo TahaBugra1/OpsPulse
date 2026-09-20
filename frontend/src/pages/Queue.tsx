@@ -147,6 +147,8 @@ export default function Queue() {
   const [rejectOpen, setRejectOpen] = useState(false)
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => loadSavedFilters())
   const [saveNameInput, setSaveNameInput] = useState('')
+  const [appliedFilterName, setAppliedFilterName] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   const rejectForm = useForm<RejectNoteFormValues>({
     resolver: zodResolver(rejectNoteSchema),
@@ -187,6 +189,11 @@ export default function Queue() {
     )
   }
 
+  function handleSearchInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    setQInput(event.target.value)
+    setAppliedFilterName('')
+  }
+
   function handleRequestTypeChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value
     setSearchParams((prev) => {
@@ -195,6 +202,7 @@ export default function Queue() {
       else next.delete('request_type_id')
       return next
     })
+    setAppliedFilterName('')
   }
 
   function handlePriorityChange(event: React.ChangeEvent<HTMLSelectElement>) {
@@ -205,6 +213,7 @@ export default function Queue() {
       else next.delete('priority')
       return next
     })
+    setAppliedFilterName('')
   }
 
   function handleDateFromChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -215,6 +224,7 @@ export default function Queue() {
       else next.delete('date_from')
       return next
     })
+    setAppliedFilterName('')
   }
 
   function handleDateToChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -225,12 +235,14 @@ export default function Queue() {
       else next.delete('date_to')
       return next
     })
+    setAppliedFilterName('')
   }
 
   function handleClearFilters() {
     setQInput('')
     setDebouncedQ('')
     setSearchParams({})
+    setAppliedFilterName('')
   }
 
   function handleSaveFilter() {
@@ -257,6 +269,7 @@ export default function Queue() {
   }
 
   function handleApplySavedFilter(name: string) {
+    setAppliedFilterName(name)
     const filter = savedFilters.find((savedFilter) => savedFilter.name === name)
     if (!filter) return
 
@@ -271,6 +284,14 @@ export default function Queue() {
     })
     setQInput(filter.q)
     setDebouncedQ(filter.q)
+  }
+
+  function handleDeleteSavedFilter() {
+    const next = savedFilters.filter((filter) => filter.name !== appliedFilterName)
+    persistSavedFilters(next)
+    setSavedFilters(next)
+    setAppliedFilterName('')
+    setDeleteDialogOpen(false)
   }
 
   useEffect(() => {
@@ -317,7 +338,7 @@ export default function Queue() {
                 type="text"
                 placeholder="Başlık veya açıklamada ara"
                 value={qInput}
-                onChange={(event) => setQInput(event.target.value)}
+                onChange={handleSearchInputChange}
               />
             </div>
             <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-end">
@@ -393,7 +414,7 @@ export default function Queue() {
               </label>
               <Select
                 id="queue-saved-filter"
-                value=""
+                value={appliedFilterName}
                 onChange={(event) => handleApplySavedFilter(event.target.value)}
               >
                 <option value="">Kayıtlı filtre seç</option>
@@ -404,6 +425,14 @@ export default function Queue() {
                 ))}
               </Select>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={!appliedFilterName}
+            >
+              Sil
+            </Button>
             <div className="flex flex-1 flex-col gap-1.5">
               <label htmlFor="queue-save-filter-name" className="text-sm font-medium">
                 Yeni Filtre Adı
@@ -566,6 +595,25 @@ export default function Queue() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Filtreyi Sil</DialogTitle>
+            <DialogDescription>
+              {appliedFilterName} filtresini silmek istediğinize emin misiniz?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              Vazgeç
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDeleteSavedFilter}>
+              Evet, Sil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

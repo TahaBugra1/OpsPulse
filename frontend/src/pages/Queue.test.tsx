@@ -1043,7 +1043,9 @@ describe('Queue page', () => {
       expect(
         within(savedFilterSelect).getByRole('option', { name: 'Acil Talepler' }),
       ).toBeInTheDocument()
-      // The select is a one-shot "apply" control, never a persistent selection.
+      // Saving a filter never selects it: appliedFilterName is only set by
+      // handleApplySavedFilter (choosing from the dropdown), not by saving,
+      // so the select correctly still shows the placeholder here.
       expect(savedFilterSelect).toHaveValue('')
       // The save-name input clears after saving.
       expect(saveNameInput).toHaveValue('')
@@ -1144,8 +1146,240 @@ describe('Queue page', () => {
       expect(screen.getByLabelText('Talep Tipi')).toHaveValue('type-9')
       expect(screen.getByLabelText('Başlangıç Tarihi')).toHaveValue('2026-01-01')
       expect(screen.getByLabelText('Bitiş Tarihi')).toHaveValue('2026-01-31')
-      // The select stays a one-shot control: it does not retain the applied name.
+      // The select now shows the applied filter's name, reflecting appliedFilterName state.
+      expect(savedFilterSelect).toHaveValue('Tam Filtre')
+    })
+
+    // Shared fixture + helper for the "delete saved filter" / "dropdown
+    // resets on manual change" tests below: seeds localStorage with one
+    // saved filter, renders the queue, applies it via the select, and
+    // returns the select element once its value reflects the applied name.
+    const savedFilterFixture = {
+      name: 'Acil Filtre',
+      q: '',
+      request_type_id: '',
+      priority: 'HIGH',
+      date_from: '',
+      date_to: '',
+    }
+
+    async function applySavedFilterAndGetSelect(
+      user: ReturnType<typeof userEvent.setup>,
+      requestTypes: Array<{ id: string; name: string; department_id?: string }> = [],
+    ) {
+      localStorage.setItem('opspulse_queue_saved_filters', JSON.stringify([savedFilterFixture]))
+      mockRequestTypesFetch(requestTypes)
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, [makeRequest()]))
+
+      const savedFilterSelect = screen.getByLabelText('Kayıtlı Filtreler')
+      await user.selectOptions(savedFilterSelect, savedFilterFixture.name)
+
+      await waitFor(() => expect(savedFilterSelect).toHaveValue(savedFilterFixture.name))
+
+      return savedFilterSelect
+    }
+
+    // AC2 [Critical]: manually changing the "Ara" search input after applying
+    // a saved filter resets the saved-filter dropdown to its placeholder.
+    it('resets the saved-filter select to placeholder when the search input changes after applying a filter', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      await user.type(screen.getByLabelText('Ara'), 'x')
+
       expect(savedFilterSelect).toHaveValue('')
+    })
+
+    // AC2 [Critical]: manually changing the "Talep Tipi" select after applying
+    // a saved filter resets the saved-filter dropdown to its placeholder.
+    it('resets the saved-filter select to placeholder when the request-type filter changes after applying a filter', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user, [
+        { id: 'type-9', name: 'Donanım Arızası', department_id: 'dept-1' },
+      ])
+
+      await user.selectOptions(screen.getByLabelText('Talep Tipi'), 'type-9')
+
+      expect(savedFilterSelect).toHaveValue('')
+    })
+
+    // AC2 [Critical]: manually changing the "Öncelik" select after applying a
+    // saved filter resets the saved-filter dropdown to its placeholder.
+    it('resets the saved-filter select to placeholder when the priority filter changes after applying a filter', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      await user.selectOptions(screen.getByLabelText('Öncelik'), 'LOW')
+
+      expect(savedFilterSelect).toHaveValue('')
+    })
+
+    // AC2 [Critical]: manually changing "Başlangıç Tarihi" after applying a
+    // saved filter resets the saved-filter dropdown to its placeholder.
+    it('resets the saved-filter select to placeholder when the start-date filter changes after applying a filter', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      fireEvent.change(screen.getByLabelText('Başlangıç Tarihi'), { target: { value: '2026-03-01' } })
+
+      expect(savedFilterSelect).toHaveValue('')
+    })
+
+    // AC2 [Critical]: manually changing "Bitiş Tarihi" after applying a saved
+    // filter resets the saved-filter dropdown to its placeholder.
+    it('resets the saved-filter select to placeholder when the end-date filter changes after applying a filter', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      fireEvent.change(screen.getByLabelText('Bitiş Tarihi'), { target: { value: '2026-03-15' } })
+
+      expect(savedFilterSelect).toHaveValue('')
+    })
+
+    // AC3 [Critical]: clicking "Sil" after applying a saved filter opens a
+    // confirmation dialog whose text names that filter.
+    it('opens a confirmation dialog naming the applied filter when Sil is clicked', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      await applySavedFilterAndGetSelect(user)
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+
+      expect(
+        await screen.findByText(
+          `${savedFilterFixture.name} filtresini silmek istediğinize emin misiniz?`,
+        ),
+      ).toBeInTheDocument()
+    })
+
+    // AC4 [Critical]: confirming the delete dialog removes the filter from
+    // localStorage and from the select's options, and the select returns to
+    // its placeholder value.
+    it('removes the filter from localStorage and the select options when the delete dialog is confirmed', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Evet, Sil' }))
+
+      await waitFor(() => expect(savedFilterSelect).toHaveValue(''))
+      expect(
+        within(savedFilterSelect).queryByRole('option', { name: savedFilterFixture.name }),
+      ).not.toBeInTheDocument()
+
+      const stored = JSON.parse(localStorage.getItem('opspulse_queue_saved_filters') ?? '[]')
+      expect(stored).toEqual([])
+    })
+
+    // AC5 [High]: cancelling the delete dialog via "Vazgeç" leaves the filter
+    // untouched in both localStorage and the select's options.
+    it('leaves the saved filter untouched when the delete dialog is cancelled', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(
+        within(savedFilterSelect).getByRole('option', { name: savedFilterFixture.name }),
+      ).toBeInTheDocument()
+
+      const stored = JSON.parse(localStorage.getItem('opspulse_queue_saved_filters') ?? '[]')
+      expect(stored).toEqual([expect.objectContaining({ name: savedFilterFixture.name })])
+    })
+
+    // AC6 [High]: with no saved filter currently applied, the "Sil" button is
+    // disabled.
+    it('disables the Sil button when no saved filter is currently applied', async () => {
+      localStorage.setItem('opspulse_queue_saved_filters', JSON.stringify([savedFilterFixture]))
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      expect(screen.getByRole('button', { name: 'Sil' })).toBeDisabled()
+    })
+
+    // AC7 [High]: deleting the currently applied saved filter does not change
+    // the current filter field values still shown in the UI.
+    it('does not change the current filter field values when the applied filter is deleted', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      await applySavedFilterAndGetSelect(user)
+
+      expect(screen.getByLabelText('Öncelik')).toHaveValue(savedFilterFixture.priority)
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Evet, Sil' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(screen.getByLabelText('Öncelik')).toHaveValue(savedFilterFixture.priority)
+    })
+
+    // AC8 [High]: clicking "Filtreleri Temizle" after applying a saved filter
+    // resets the saved-filter dropdown back to its placeholder.
+    it('resets the saved-filter select to placeholder when Filtreleri Temizle is clicked', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const savedFilterSelect = await applySavedFilterAndGetSelect(user)
+
+      await user.click(screen.getByRole('button', { name: 'Filtreleri Temizle' }))
+
+      await waitFor(() => expect(savedFilterSelect).toHaveValue(''))
+    })
+
+    // AC11 [Medium]: with two saved filters, deleting one leaves the other
+    // fully intact in both localStorage and the select's remaining options.
+    it('leaves the other saved filter intact in localStorage and the select when one is deleted', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      const otherFilter = {
+        name: 'Diğer Filtre',
+        q: '',
+        request_type_id: '',
+        priority: 'LOW',
+        date_from: '',
+        date_to: '',
+      }
+      localStorage.setItem(
+        'opspulse_queue_saved_filters',
+        JSON.stringify([savedFilterFixture, otherFilter]),
+      )
+      mockRequestTypesFetch()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequest()]))
+
+      renderQueue(authorityUser)
+
+      await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument())
+
+      vi.mocked(fetch).mockResolvedValue(jsonResponse(200, [makeRequest()]))
+
+      const savedFilterSelect = screen.getByLabelText('Kayıtlı Filtreler')
+      await user.selectOptions(savedFilterSelect, savedFilterFixture.name)
+      await waitFor(() => expect(savedFilterSelect).toHaveValue(savedFilterFixture.name))
+
+      await user.click(screen.getByRole('button', { name: 'Sil' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Evet, Sil' }))
+
+      await waitFor(() => expect(savedFilterSelect).toHaveValue(''))
+      expect(
+        within(savedFilterSelect).queryByRole('option', { name: savedFilterFixture.name }),
+      ).not.toBeInTheDocument()
+      expect(
+        within(savedFilterSelect).getByRole('option', { name: otherFilter.name }),
+      ).toBeInTheDocument()
+
+      const stored = JSON.parse(localStorage.getItem('opspulse_queue_saved_filters') ?? '[]')
+      expect(stored).toEqual([expect.objectContaining({ name: otherFilter.name })])
     })
   })
 })
