@@ -149,11 +149,17 @@ export default function Login() {
               </p>
             )}
 
-            <Button type="submit" disabled={loading} className="w-full">
+            <Button type="submit" disabled={loading} loading={loading} className="w-full">
               Giriş Yap
             </Button>
 
-            <div className="flex justify-center">
+            <div className="flex items-center gap-3">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs text-muted-foreground">veya</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <div className="flex w-full justify-center">
               <GoogleLogin
                 onSuccess={handleGoogleSuccess}
                 onError={handleGoogleError}

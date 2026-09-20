@@ -190,7 +190,7 @@ export default function Register() {
                 </p>
               )}
 
-              <Button type="submit" disabled={loading} className="w-full">
+              <Button type="submit" disabled={loading} loading={loading} className="w-full">
                 Kayıt Ol
               </Button>
             </form>

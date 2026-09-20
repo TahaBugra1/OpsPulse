@@ -146,7 +146,7 @@ export default function NewRequest() {
                 </p>
               )}
 
-              <Button type="submit" disabled={mutation.isPending}>
+              <Button type="submit" disabled={mutation.isPending} loading={mutation.isPending}>
                 Oluştur
               </Button>
             </form>
