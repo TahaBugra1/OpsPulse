@@ -31,6 +31,10 @@ export interface RequestType {
   id: string
   name: string
   department_id: string
+  // Present only from useAllRequestTypes() (the ADMIN catalog listing) — the
+  // EMPLOYEE-facing useRequestTypes() below never includes it, so this is
+  // optional rather than widening that hook's response shape.
+  is_active?: boolean
 }
 
 export interface RequestComment {
@@ -178,6 +182,41 @@ export function useRequestTypes() {
   })
 }
 
+// ADMIN-only: every request type including inactive ones. useRequestTypes()
+// above is UNCHANGED and stays the one every role calls (NewRequest.tsx etc.)
+export function useAllRequestTypes() {
+  return useQuery({
+    queryKey: ['request-types', 'all'],
+    queryFn: () => apiGet<RequestType[]>('/api/request-types/all'),
+  })
+}
+
+export function useCreateRequestType() {
+  return useMutation({
+    mutationFn: (body: { name: string; department_id: string }) =>
+      apiPost<RequestType>('/api/request-types', body),
+  })
+}
+
+export function useUpdateRequestType(id: string) {
+  return useMutation({
+    mutationFn: (body: { name: string; department_id: string }) =>
+      apiPatch<RequestType>(`/api/request-types/${id}`, body),
+  })
+}
+
+export function useDeactivateRequestType() {
+  return useMutation({
+    mutationFn: (id: string) => apiPatch<RequestType>(`/api/request-types/${id}/deactivate`),
+  })
+}
+
+export function useActivateRequestType() {
+  return useMutation({
+    mutationFn: (id: string) => apiPatch<RequestType>(`/api/request-types/${id}/activate`),
+  })
+}
+
 export function useCreateRequest() {
   // The real POST response is the raw `requests` row (RETURNING *), narrower
   // than RequestListItem (no *_name/is_overdue fields) — only `id` is relied on.
@@ -229,22 +268,56 @@ export function useDeleteComment(requestId: string, commentId: string) {
   })
 }
 
+export interface BulkCommentDeleteResult {
+  succeeded: number
+  conflicted: number
+  failed: number
+}
+
+// There is no bulk endpoint by design: this loops the existing per-comment
+// delete endpoint one at a time (never in parallel) and swallows each item's
+// error so a single failure - typically a 409 from the comment having already
+// been deleted - does not stop the remaining ids.
+export function useBulkDeleteComments(requestId: string) {
+  return useMutation({
+    mutationFn: async ({ commentIds }: { commentIds: string[] }) => {
+      const result: BulkCommentDeleteResult = { succeeded: 0, conflicted: 0, failed: 0 }
+
+      for (const commentId of commentIds) {
+        try {
+          await apiDelete<RequestComment>(`/api/requests/${requestId}/comments/${commentId}`)
+          result.succeeded += 1
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) result.conflicted += 1
+          else result.failed += 1
+        }
+      }
+
+      return result
+    },
+  })
+}
+
 export interface QueueFilters {
   q?: string
   request_type_id?: string
   priority?: string
+  date_from?: string
+  date_to?: string
 }
 
 export function useOpenQueue(filters: QueueFilters = {}) {
-  const { q, request_type_id, priority } = filters
+  const { q, request_type_id, priority, date_from, date_to } = filters
 
   return useQuery({
-    queryKey: ['requests', 'queue', q ?? '', request_type_id ?? '', priority ?? ''],
+    queryKey: ['requests', 'queue', q ?? '', request_type_id ?? '', priority ?? '', date_from ?? '', date_to ?? ''],
     queryFn: () => {
       const params = new URLSearchParams({ status: 'OPEN' })
       if (q) params.set('q', q)
       if (request_type_id) params.set('request_type_id', request_type_id)
       if (priority) params.set('priority', priority)
+      if (date_from) params.set('date_from', date_from)
+      if (date_to) params.set('date_to', date_to)
       return apiGet<RequestListItem[]>(`/api/requests?${params.toString()}`)
     },
     select: (data) => [...data].reverse(),

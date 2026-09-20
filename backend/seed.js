@@ -38,7 +38,14 @@ async function seed() {
 
   const authorities = [
     { name: 'IT', surname: 'Yetkilisi', email: 'it.authority@opspulse.com', department: 'IT' },
+    // Second IT authority so workload/bottleneck views have more than one
+    // officer to distribute claimed work across (a single officer always
+    // shows 100% of the department's active count, which is uninteresting).
+    { name: 'IT', surname: 'Yetkilisi 2', email: 'it.authority2@opspulse.com', department: 'IT' },
     { name: 'HR', surname: 'Yetkilisi', email: 'hr.authority@opspulse.com', department: 'HR' },
+    // Finance had request types (Expense Reimbursement) but no authority to
+    // ever claim them — nothing in Finance's queue was ever assignable.
+    { name: 'Finance', surname: 'Yetkilisi', email: 'finance.authority@opspulse.com', department: 'Finance' },
   ];
   for (const a of authorities) {
     await pool.query(

@@ -21,7 +21,7 @@ function attachSockets(io) {
 
     let result;
     try {
-      result = await pool.query('SELECT id, role, department_id, is_active FROM users WHERE id = $1', [payload.sub]);
+      result = await pool.query('SELECT id, role, department_id, is_active, must_change_password FROM users WHERE id = $1', [payload.sub]);
     } catch (dbErr) {
       return next(new Error('Bir hata oluştu'));
     }
@@ -29,6 +29,9 @@ function attachSockets(io) {
 
     if (!row || !row.is_active) {
       return next(new Error('Hesap aktif değil'));
+    }
+    if (row.must_change_password) {
+      return next(new Error('Devam etmek için şifrenizi değiştirmeniz gerekiyor'));
     }
 
     socket.user = { id: row.id, role: row.role, department_id: row.department_id };

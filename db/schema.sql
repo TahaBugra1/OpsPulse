@@ -58,6 +58,10 @@ CREATE TABLE users (
   -- "my department's requests" query (NULL matches nothing in SQL).
   department_id  UUID REFERENCES departments(id) ON DELETE RESTRICT,
   is_active      BOOLEAN NOT NULL DEFAULT true,
+  -- Set true when an ADMIN provisions or resets the account with a
+  -- temporary password; cleared when the user sets their own. Enforced
+  -- in authMiddleware and the Socket.io handshake.
+  must_change_password BOOLEAN NOT NULL DEFAULT false,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (role != 'DEPARTMENT_AUTHORITY' OR department_id IS NOT NULL),

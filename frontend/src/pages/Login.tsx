@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -161,6 +161,13 @@ export default function Login() {
               />
             </div>
           </form>
+
+          <p className="mt-5 text-sm text-muted-foreground">
+            Hesabın yok mu?{' '}
+            <Link to="/register" className="underline underline-offset-4">
+              Kayıt ol
+            </Link>
+          </p>
         </CardContent>
       </Card>
     </main>

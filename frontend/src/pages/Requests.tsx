@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { StatusBadge } from '@/components/ui/status-badge'
 import {
   Table,
   TableBody,
@@ -15,6 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import {
   getSlaDisplay,
   PRIORITY_LABELS,
@@ -31,16 +34,11 @@ const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   overdue: 'text-destructive',
 }
 
-// Matches Input's exact Tailwind class list (see src/components/ui/input.tsx)
-// per the project's shadcn/native-select-fallback convention (established in
-// NewRequest.tsx — no shadcn Select component exists yet).
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
-
 export default function Requests() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { data: requestTypes } = useRequestTypes()
+  usePageTitle(REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler')
 
   const [searchParams, setSearchParams] = useSearchParams()
   const status = searchParams.get('status') ?? ''
@@ -133,18 +131,17 @@ export default function Requests() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{REQUESTS_PAGE_TITLE[user!.role] ?? 'Talepler'}</h1>
-        {user!.role !== 'ADMIN' && (
+      {user!.role !== 'ADMIN' && (
+        <div className="flex items-center justify-end">
           <Button type="button" onClick={() => navigate('/requests/new')}>
             Yeni Talep
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5 sm:max-w-sm">
               <label htmlFor="requests-search" className="text-sm font-medium">
                 Ara
               </label>
@@ -156,78 +153,77 @@ export default function Requests() {
                 onChange={(event) => setQInput(event.target.value)}
               />
             </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-status" className="text-sm font-medium">
-                Durum
-              </label>
-              <select
-                id="requests-status"
-                className={SELECT_CLASSES}
-                value={status}
-                onChange={handleStatusChange}
-                disabled={assignedToMe}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-request-type" className="text-sm font-medium">
-                Talep Tipi
-              </label>
-              <select
-                id="requests-request-type"
-                className={SELECT_CLASSES}
-                value={requestTypeId}
-                onChange={handleRequestTypeChange}
-              >
-                <option value="">Tümü</option>
-                {visibleRequestTypes?.map((requestType) => (
-                  <option key={requestType.id} value={requestType.id}>
-                    {requestType.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="requests-priority" className="text-sm font-medium">
-                Öncelik
-              </label>
-              <select
-                id="requests-priority"
-                className={SELECT_CLASSES}
-                value={priority}
-                onChange={handlePriorityChange}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {user?.role === 'DEPARTMENT_AUTHORITY' && (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="requests-assigned-to-me"
-                  checked={assignedToMe}
-                  onCheckedChange={handleAssignedToMeChange}
-                />
-                <label htmlFor="requests-assigned-to-me" className="text-sm font-medium">
-                  Bana Atananlar
+            <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-end">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-status" className="text-sm font-medium">
+                  Durum
                 </label>
+                <Select
+                  id="requests-status"
+                  value={status}
+                  onChange={handleStatusChange}
+                  disabled={assignedToMe}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
               </div>
-            )}
-            {hasActiveFilters && (
-              <Button type="button" variant="outline" onClick={handleClearFilters}>
-                Filtreleri Temizle
-              </Button>
-            )}
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-request-type" className="text-sm font-medium">
+                  Talep Tipi
+                </label>
+                <Select
+                  id="requests-request-type"
+                  value={requestTypeId}
+                  onChange={handleRequestTypeChange}
+                >
+                  <option value="">Tümü</option>
+                  {visibleRequestTypes?.map((requestType) => (
+                    <option key={requestType.id} value={requestType.id}>
+                      {requestType.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="requests-priority" className="text-sm font-medium">
+                  Öncelik
+                </label>
+                <Select
+                  id="requests-priority"
+                  value={priority}
+                  onChange={handlePriorityChange}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              {user?.role === 'DEPARTMENT_AUTHORITY' && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="requests-assigned-to-me"
+                    checked={assignedToMe}
+                    onCheckedChange={handleAssignedToMeChange}
+                  />
+                  <label htmlFor="requests-assigned-to-me" className="text-sm font-medium">
+                    Bana Atananlar
+                  </label>
+                </div>
+              )}
+              {hasActiveFilters && (
+                <Button type="button" variant="outline" onClick={handleClearFilters}>
+                  Filtreleri Temizle
+                </Button>
+              )}
+            </div>
           </div>
 
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -298,7 +294,7 @@ export default function Requests() {
                       <TableCell>{request.title}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
+                          <StatusBadge status={request.status} />
                           {request.is_overdue && <Badge variant="destructive">Gecikmiş</Badge>}
                         </div>
                       </TableCell>

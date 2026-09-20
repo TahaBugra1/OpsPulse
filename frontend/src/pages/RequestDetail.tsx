@@ -3,9 +3,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { type ChangeEvent, useEffect, useState } from 'react'
 import { Controller, useForm, type UseFormReturn } from 'react-hook-form'
 import { useParams } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -16,10 +18,14 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
+  type BulkCommentDeleteResult,
   getSlaDisplay,
   PRIORITY_LABELS,
   type RequestComment,
@@ -28,6 +34,7 @@ import {
   type SlaTone,
   STATUS_LABELS,
   useAddComment,
+  useBulkDeleteComments,
   useChangePriority,
   useChangeRequestStatus,
   useClaimRequest,
@@ -43,9 +50,6 @@ import {
   type CommentFormValues,
   type RejectNoteFormValues,
 } from '@/lib/validation'
-
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40'
 
 const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   normal: 'text-muted-foreground',
@@ -80,6 +84,7 @@ export default function RequestDetail() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const requestQuery = useRequest(requestId)
+  usePageTitle('Talep Detayı')
   const commentsQuery = useRequestComments(requestId)
   const historyQuery = useRequestHistory(requestId)
   const socket = useSocket()
@@ -94,6 +99,14 @@ export default function RequestDetail() {
   const [commentActionError, setCommentActionError] = useState<string | null>(null)
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [commentSelection, setCommentSelection] = useState<string[]>([])
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
+  const bulkDeleteMutation = useBulkDeleteComments(requestId)
+
+  const selectableCommentIds = commentsQuery.data?.filter((c) => !c.is_deleted).map((c) => c.id) ?? []
+  const selectedCommentIds = commentSelection.filter((id) =>
+    commentsQuery.data?.some((c) => c.id === id && !c.is_deleted),
+  )
 
   const rejectForm = useForm<RejectNoteFormValues>({
     resolver: zodResolver(rejectNoteSchema),
@@ -202,6 +215,34 @@ export default function RequestDetail() {
     editCommentForm.reset({ content: '' })
   }
 
+  function handleToggleComment(id: string) {
+    setCommentSelection((prev) => (prev.includes(id) ? prev.filter((selectedId) => selectedId !== id) : [...prev, id]))
+  }
+
+  function handleToggleAllComments() {
+    setCommentSelection(selectedCommentIds.length === selectableCommentIds.length ? [] : selectableCommentIds)
+  }
+
+  function handleBulkDeleteConfirm() {
+    bulkDeleteMutation.mutate(
+      { commentIds: selectedCommentIds },
+      {
+        onSuccess: (result: BulkCommentDeleteResult) => {
+          const parts = [`${result.succeeded} yorum silindi`]
+          if (result.conflicted > 0) parts.push(`${result.conflicted} yorum zaten silinmiş`)
+          if (result.failed > 0) parts.push(`${result.failed} yorum başarısız oldu`)
+          const message = parts.join(', ')
+          if (result.conflicted === 0 && result.failed === 0) toast.success(message)
+          else toast.error(message)
+
+          setBulkDeleteConfirmOpen(false)
+          setCommentSelection([])
+          queryClient.invalidateQueries({ queryKey: ['requests', requestId, 'comments'] })
+        },
+      },
+    )
+  }
+
   // Live updates: while this page is mounted, join this request's socket room
   // and apply incoming events directly to the query cache. The payloads are
   // the same enriched shape GET already returns, so no extra fetch is needed.
@@ -265,12 +306,12 @@ export default function RequestDetail() {
   const canChangePriority =
     !!request && (request.status === 'ASSIGNED' || request.status === 'IN_PROGRESS') && isAssignee
   const canComment = !!user && user.role !== 'ADMIN'
+  const isAdmin = user?.role === 'ADMIN'
   const hasActions = canClaim || canStart || canComplete || canReject || canChangePriority
   const sla = request ? getSlaDisplay(request) : null
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Talep Detayı</h1>
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -298,10 +339,10 @@ export default function RequestDetail() {
                 <p className="whitespace-pre-wrap text-sm text-muted-foreground">{request.description}</p>
               </div>
 
-              <dl className="grid grid-cols-2 gap-3 text-sm">
+              <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-2 text-sm">
                 <dt className="text-muted-foreground">Durum</dt>
                 <dd>
-                  <Badge variant="outline">{STATUS_LABELS[request.status] ?? request.status}</Badge>
+                  <StatusBadge status={request.status} />
                 </dd>
 
                 <dt className="text-muted-foreground">Öncelik</dt>
@@ -373,19 +414,18 @@ export default function RequestDetail() {
                   {canChangePriority && (
                     <Field className="max-w-xs">
                       <FieldLabel htmlFor="request-priority">Öncelik Değiştir</FieldLabel>
-                      <select
+                      <Select
                         id="request-priority"
                         value={request.priority}
                         onChange={handlePriorityChange}
                         disabled={priorityMutation.isPending}
-                        className={SELECT_CLASSES}
                       >
                         {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
                           <option key={value} value={value}>
                             {label}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                   )}
 
@@ -399,11 +439,34 @@ export default function RequestDetail() {
                 </div>
               )}
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-4">
                 <h3 className="text-base font-medium">Yorumlar</h3>
                 {commentsQuery.data && commentsQuery.data.length === 0 && (
                   <p className="text-sm text-muted-foreground">Henüz yorum yok</p>
                 )}
+
+                {isAdmin && selectableCommentIds.length > 0 && (
+                  <label className="flex w-fit items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={selectedCommentIds.length === selectableCommentIds.length}
+                      indeterminate={
+                        selectedCommentIds.length > 0 && selectedCommentIds.length < selectableCommentIds.length
+                      }
+                      onCheckedChange={handleToggleAllComments}
+                    />
+                    Tümünü Seç
+                  </label>
+                )}
+
+                {selectedCommentIds.length > 0 && (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-muted-foreground">{selectedCommentIds.length} yorum seçildi</p>
+                    <Button type="button" variant="destructive" onClick={() => setBulkDeleteConfirmOpen(true)}>
+                      Seçilenleri Sil
+                    </Button>
+                  </div>
+                )}
+
                 {commentsQuery.data && commentsQuery.data.length > 0 && (
                   <ul className="flex flex-col gap-3">
                     {commentsQuery.data.map((comment) => (
@@ -412,8 +475,11 @@ export default function RequestDetail() {
                         requestId={requestId}
                         comment={comment}
                         currentUserId={user?.id}
+                        isAdmin={isAdmin}
                         isEditing={editingCommentId === comment.id}
                         editForm={editCommentForm}
+                        isSelected={selectedCommentIds.includes(comment.id)}
+                        onToggleSelect={handleToggleComment}
                         onStartEdit={() => startEditingComment(comment)}
                         onCancelEdit={cancelEditingComment}
                         onEditSuccess={(updated) => {
@@ -479,7 +545,7 @@ export default function RequestDetail() {
                 )}
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-4">
                 <h3 className="text-base font-medium">Geçmiş</h3>
                 {historyQuery.isPending && <p className="text-sm text-muted-foreground">Yükleniyor...</p>}
                 {historyQuery.isError && (
@@ -498,7 +564,7 @@ export default function RequestDetail() {
                 {historyQuery.data && historyQuery.data.length > 0 && (
                   <ul className="flex flex-col gap-3">
                     {historyQuery.data.map((entry) => (
-                      <li key={entry.id} className="rounded-md border p-3 text-sm">
+                      <li key={entry.id} className="rounded-lg border p-3 text-sm">
                         <div className="mb-1 flex items-center justify-between">
                           <span>{formatHistoryEntry(entry)}</span>
                           <span className="text-xs text-muted-foreground">
@@ -568,6 +634,36 @@ export default function RequestDetail() {
                   </form>
                 </DialogContent>
               </Dialog>
+
+              <Dialog open={bulkDeleteConfirmOpen} onOpenChange={(open) => setBulkDeleteConfirmOpen(open)}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Yorumları Sil</DialogTitle>
+                    <DialogDescription>
+                      {selectedCommentIds.length} yorum silinecek. Bu işlem geri alınamaz.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setBulkDeleteConfirmOpen(false)}
+                      disabled={bulkDeleteMutation.isPending}
+                    >
+                      Vazgeç
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={handleBulkDeleteConfirm}
+                      disabled={bulkDeleteMutation.isPending}
+                    >
+                      Sil
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
           )}
         </CardContent>
@@ -584,8 +680,11 @@ function CommentItem({
   requestId,
   comment,
   currentUserId,
+  isAdmin,
   isEditing,
   editForm,
+  isSelected,
+  onToggleSelect,
   onStartEdit,
   onCancelEdit,
   onEditSuccess,
@@ -595,8 +694,11 @@ function CommentItem({
   requestId: string
   comment: RequestComment
   currentUserId: string | undefined
+  isAdmin: boolean
   isEditing: boolean
   editForm: UseFormReturn<CommentFormValues>
+  isSelected: boolean
+  onToggleSelect: (id: string) => void
   onStartEdit: () => void
   onCancelEdit: () => void
   onEditSuccess: (updated: RequestComment) => void
@@ -619,7 +721,7 @@ function CommentItem({
 
   if (comment.is_deleted) {
     return (
-      <li className="rounded-md border p-3 text-sm">
+      <li className="rounded-lg border p-3 text-sm">
         <div className="mb-1 flex items-center justify-between">
           <span className="font-medium">{comment.author_name}</span>
           <span className="text-xs text-muted-foreground">
@@ -635,57 +737,69 @@ function CommentItem({
   const isEdited = comment.updated_at !== comment.created_at
 
   return (
-    <li className="rounded-md border p-3 text-sm">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="font-medium">{comment.author_name}</span>
-        <span className="text-xs text-muted-foreground">
-          {new Date(comment.created_at).toLocaleString('tr-TR')}
-          {isEdited && ' (düzenlendi)'}
-        </span>
-      </div>
+    <li className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+      {isAdmin && (
+        <Checkbox
+          aria-label="Yorumu seç"
+          checked={isSelected}
+          onCheckedChange={() => onToggleSelect(comment.id)}
+          className="mt-1"
+        />
+      )}
+      <div className="flex-1">
+        <div className="mb-1 flex items-center justify-between">
+          <span className="font-medium">{comment.author_name}</span>
+          <span className="text-xs text-muted-foreground">
+            {new Date(comment.created_at).toLocaleString('tr-TR')}
+            {isEdited && ' (düzenlendi)'}
+          </span>
+        </div>
 
-      {isEditing ? (
-        <form className="flex flex-col gap-3" onSubmit={editForm.handleSubmit(onEditSubmit)} noValidate>
-          <Controller
-            control={editForm.control}
-            name="content"
-            render={({ field, fieldState }) => (
-              <Field data-invalid={!!fieldState.error}>
-                <FieldLabel htmlFor={`comment-edit-${comment.id}`}>Yorumu Düzenle</FieldLabel>
-                <Input
-                  {...field}
-                  id={`comment-edit-${comment.id}`}
-                  disabled={updateMutation.isPending}
-                  aria-invalid={!!fieldState.error}
-                />
-                <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-              </Field>
-            )}
-          />
-          <div className="flex items-center gap-2">
-            <Button type="submit" size="sm" disabled={updateMutation.isPending}>
-              Kaydet
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={onCancelEdit} disabled={updateMutation.isPending}>
-              Vazgeç
-            </Button>
-          </div>
-        </form>
-      ) : (
-        <>
-          <p className="whitespace-pre-wrap">{comment.content}</p>
-          {isAuthor && (
-            <div className="mt-2 flex items-center gap-2">
-              <Button type="button" size="sm" variant="ghost" onClick={onStartEdit}>
-                Düzenle
+        {isEditing ? (
+          <form className="flex flex-col gap-3" onSubmit={editForm.handleSubmit(onEditSubmit)} noValidate>
+            <Controller
+              control={editForm.control}
+              name="content"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={!!fieldState.error}>
+                  <FieldLabel htmlFor={`comment-edit-${comment.id}`}>Yorumu Düzenle</FieldLabel>
+                  <Input
+                    {...field}
+                    id={`comment-edit-${comment.id}`}
+                    disabled={updateMutation.isPending}
+                    aria-invalid={!!fieldState.error}
+                  />
+                  <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                </Field>
+              )}
+            />
+            <div className="flex items-center gap-2">
+              <Button type="submit" size="sm" disabled={updateMutation.isPending}>
+                Kaydet
               </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={handleDelete} disabled={deleteMutation.isPending}>
-                Sil
+              <Button type="button" size="sm" variant="outline" onClick={onCancelEdit} disabled={updateMutation.isPending}>
+                Vazgeç
               </Button>
             </div>
-          )}
-        </>
-      )}
+          </form>
+        ) : (
+          <>
+            <p className="whitespace-pre-wrap">{comment.content}</p>
+            {(isAuthor || isAdmin) && (
+              <div className="mt-2 flex items-center gap-2">
+                {isAuthor && (
+                  <Button type="button" size="sm" variant="ghost" onClick={onStartEdit}>
+                    Düzenle
+                  </Button>
+                )}
+                <Button type="button" size="sm" variant="ghost" onClick={handleDelete} disabled={deleteMutation.isPending}>
+                  Sil
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </li>
   )
 }

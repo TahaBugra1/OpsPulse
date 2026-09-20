@@ -1,22 +1,28 @@
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ThemeProvider } from 'next-themes'
 import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
-import { GuestOnlyRoute, ProtectedRoute } from '@/components/ProtectedRoute'
+import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
+import AdminCatalog from '@/pages/AdminCatalog'
 import AdminUsers from '@/pages/AdminUsers'
 import Analytics from '@/pages/Analytics'
+import ChangePassword from '@/pages/ChangePassword'
+import CompleteProfile from '@/pages/CompleteProfile'
 import Login from '@/pages/Login'
 import NewRequest from '@/pages/NewRequest'
 import NotFound from '@/pages/NotFound'
 import Profile from '@/pages/Profile'
 import Queue from '@/pages/Queue'
+import Register from '@/pages/Register'
 import RequestDetail from '@/pages/RequestDetail'
 import Requests from '@/pages/Requests'
+import Team from '@/pages/Team'
 
 const queryClient = new QueryClient()
 
@@ -41,36 +47,51 @@ function RootRedirect() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
-        <AuthProvider>
-          <AuthWiring />
-          <SocketProvider>
-            <BrowserRouter>
-              <Routes>
-                <Route element={<ProtectedRoute />}>
-                  <Route element={<AppShell />}>
-                    <Route index element={<RootRedirect />} />
-                    <Route path="/analytics" element={<Analytics />} />
-                    <Route path="/requests" element={<Requests />} />
-                    <Route path="/requests/new" element={<NewRequest />} />
-                    <Route path="/requests/:id" element={<RequestDetail />} />
-                    <Route path="/profile" element={<Profile />} />
-                    <Route path="/queue" element={<Queue />} />
-                    <Route path="/admin/users" element={<AdminUsers />} />
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+      <QueryClientProvider client={queryClient}>
+        <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID}>
+          <AuthProvider>
+            <AuthWiring />
+            <SocketProvider>
+              <BrowserRouter>
+                <Routes>
+                  <Route element={<ProtectedRoute />}>
+                    <Route element={<AppShell />}>
+                      <Route index element={<RootRedirect />} />
+                      <Route path="/analytics" element={<Analytics />} />
+                      <Route path="/requests" element={<Requests />} />
+                      <Route path="/requests/new" element={<NewRequest />} />
+                      <Route path="/requests/:id" element={<RequestDetail />} />
+                      <Route path="/profile" element={<Profile />} />
+                      <Route path="/queue" element={<Queue />} />
+                      <Route path="/team" element={<Team />} />
+                      <Route path="/admin/users" element={<AdminUsers />} />
+                      <Route path="/admin/catalog" element={<AdminCatalog />} />
+                    </Route>
                   </Route>
-                </Route>
-                <Route element={<GuestOnlyRoute />}>
-                  <Route path="/login" element={<Login />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
-          </SocketProvider>
-          <Toaster />
-        </AuthProvider>
-      </GoogleOAuthProvider>
-    </QueryClientProvider>
+                  {/* Deliberately OUTSIDE ProtectedRoute: ProtectedRoute is what
+                      redirects here, so nesting it there would loop forever.
+                      IncompleteProfileRoute does its own unauthenticated check. */}
+                  <Route element={<IncompleteProfileRoute />}>
+                    <Route path="/complete-profile" element={<CompleteProfile />} />
+                  </Route>
+                  {/* Also OUTSIDE ProtectedRoute for the same reason: ProtectedRoute redirects here. */}
+                  <Route element={<PasswordChangeRoute />}>
+                    <Route path="/change-password" element={<ChangePassword />} />
+                  </Route>
+                  <Route element={<GuestOnlyRoute />}>
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/register" element={<Register />} />
+                  </Route>
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </BrowserRouter>
+            </SocketProvider>
+            <Toaster />
+          </AuthProvider>
+        </GoogleOAuthProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   )
 }
 

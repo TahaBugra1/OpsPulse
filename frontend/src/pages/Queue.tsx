@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -27,6 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/context/AuthContext'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { useSocket } from '@/context/SocketContext'
 import { ApiError } from '@/lib/api'
 import {
@@ -42,16 +44,40 @@ import {
 } from '@/lib/requests'
 import { rejectNoteSchema, type RejectNoteFormValues } from '@/lib/validation'
 
-// Matches Input's exact Tailwind class list (see src/components/ui/input.tsx)
-// per the project's shadcn/native-select-fallback convention (established in
-// NewRequest.tsx — no shadcn Select component exists yet).
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80'
-
 const SLA_TONE_CLASSES: Record<SlaTone, string> = {
   normal: 'text-muted-foreground',
   warning: 'text-warning',
   overdue: 'text-destructive',
+}
+
+const SAVED_FILTERS_KEY = 'opspulse_queue_saved_filters'
+
+interface SavedFilter {
+  name: string
+  q: string
+  request_type_id: string
+  priority: string
+  date_from: string
+  date_to: string
+}
+
+function loadSavedFilters(): SavedFilter[] {
+  try {
+    const raw = localStorage.getItem(SAVED_FILTERS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function persistSavedFilters(filters: SavedFilter[]): void {
+  try {
+    localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(filters))
+  } catch {
+    // private-browsing/storage-full: non-critical convenience feature, ignore.
+  }
 }
 
 // A bulk run reports successes and failures separately, and tells a 409
@@ -67,12 +93,15 @@ export default function Queue() {
   const { user } = useAuth()
   const socket = useSocket()
   const queryClient = useQueryClient()
+  usePageTitle('Kuyruk')
   const { data: requestTypes } = useRequestTypes()
   const canClaim = user?.role === 'DEPARTMENT_AUTHORITY'
 
   const [searchParams, setSearchParams] = useSearchParams()
   const requestTypeId = searchParams.get('request_type_id') ?? ''
   const priority = searchParams.get('priority') ?? ''
+  const dateFrom = searchParams.get('date_from') ?? ''
+  const dateTo = searchParams.get('date_to') ?? ''
   const urlQ = searchParams.get('q') ?? ''
 
   const [qInput, setQInput] = useState(urlQ)
@@ -101,14 +130,25 @@ export default function Queue() {
       ? requestTypes?.filter((requestType) => requestType.department_id === user.department_id)
       : requestTypes
 
-  const filters = { q: debouncedQ, request_type_id: requestTypeId, priority }
+  const dateRangeError = !!(dateFrom && dateTo && dateFrom > dateTo)
+  const filters = {
+    q: debouncedQ,
+    request_type_id: requestTypeId,
+    priority,
+    date_from: dateRangeError ? '' : dateFrom,
+    date_to: dateRangeError ? '' : dateTo,
+  }
   const { data, isPending, isError, error, refetch } = useOpenQueue(filters)
-  const queueKey = ['requests', 'queue', debouncedQ, requestTypeId, priority]
-  const hasActiveFilters = !!(debouncedQ || requestTypeId || priority)
+  const queueKey = ['requests', 'queue', debouncedQ, requestTypeId, priority, filters.date_from, filters.date_to]
+  const hasActiveFilters = !!(debouncedQ || requestTypeId || priority || dateFrom || dateTo)
 
   const bulkMutation = useBulkQueueAction()
   const [selection, setSelection] = useState<string[]>([])
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() => loadSavedFilters())
+  const [saveNameInput, setSaveNameInput] = useState('')
+  const [appliedFilterName, setAppliedFilterName] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   const rejectForm = useForm<RejectNoteFormValues>({
     resolver: zodResolver(rejectNoteSchema),
@@ -149,6 +189,11 @@ export default function Queue() {
     )
   }
 
+  function handleSearchInputChange(event: React.ChangeEvent<HTMLInputElement>) {
+    setQInput(event.target.value)
+    setAppliedFilterName('')
+  }
+
   function handleRequestTypeChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value
     setSearchParams((prev) => {
@@ -157,6 +202,7 @@ export default function Queue() {
       else next.delete('request_type_id')
       return next
     })
+    setAppliedFilterName('')
   }
 
   function handlePriorityChange(event: React.ChangeEvent<HTMLSelectElement>) {
@@ -167,12 +213,85 @@ export default function Queue() {
       else next.delete('priority')
       return next
     })
+    setAppliedFilterName('')
+  }
+
+  function handleDateFromChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const value = event.target.value
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('date_from', value)
+      else next.delete('date_from')
+      return next
+    })
+    setAppliedFilterName('')
+  }
+
+  function handleDateToChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const value = event.target.value
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (value) next.set('date_to', value)
+      else next.delete('date_to')
+      return next
+    })
+    setAppliedFilterName('')
   }
 
   function handleClearFilters() {
     setQInput('')
     setDebouncedQ('')
     setSearchParams({})
+    setAppliedFilterName('')
+  }
+
+  function handleSaveFilter() {
+    const name = saveNameInput.trim()
+    if (!name) return
+
+    const newFilter: SavedFilter = {
+      name,
+      q: debouncedQ,
+      request_type_id: requestTypeId,
+      priority,
+      date_from: dateFrom,
+      date_to: dateTo,
+    }
+    const existingIndex = savedFilters.findIndex((filter) => filter.name === name)
+    const next =
+      existingIndex === -1
+        ? [...savedFilters, newFilter]
+        : savedFilters.map((filter, index) => (index === existingIndex ? newFilter : filter))
+
+    persistSavedFilters(next)
+    setSavedFilters(next)
+    setSaveNameInput('')
+  }
+
+  function handleApplySavedFilter(name: string) {
+    setAppliedFilterName(name)
+    const filter = savedFilters.find((savedFilter) => savedFilter.name === name)
+    if (!filter) return
+
+    setSearchParams(() => {
+      const next = new URLSearchParams()
+      if (filter.q) next.set('q', filter.q)
+      if (filter.request_type_id) next.set('request_type_id', filter.request_type_id)
+      if (filter.priority) next.set('priority', filter.priority)
+      if (filter.date_from) next.set('date_from', filter.date_from)
+      if (filter.date_to) next.set('date_to', filter.date_to)
+      return next
+    })
+    setQInput(filter.q)
+    setDebouncedQ(filter.q)
+  }
+
+  function handleDeleteSavedFilter() {
+    const next = savedFilters.filter((filter) => filter.name !== appliedFilterName)
+    persistSavedFilters(next)
+    setSavedFilters(next)
+    setAppliedFilterName('')
+    setDeleteDialogOpen(false)
   }
 
   useEffect(() => {
@@ -203,15 +322,14 @@ export default function Queue() {
       socket.off('request:addedToQueue', handleAdded)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socket, queryClient, debouncedQ, requestTypeId, priority])
+  }, [socket, queryClient, debouncedQ, requestTypeId, priority, filters.date_from, filters.date_to])
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Kuyruk</h1>
       <Card className="w-full">
         <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex flex-1 flex-col gap-1.5">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5 sm:max-w-sm">
               <label htmlFor="queue-search" className="text-sm font-medium">
                 Ara
               </label>
@@ -220,50 +338,121 @@ export default function Queue() {
                 type="text"
                 placeholder="Başlık veya açıklamada ara"
                 value={qInput}
-                onChange={(event) => setQInput(event.target.value)}
+                onChange={handleSearchInputChange}
               />
             </div>
+            <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-end">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-request-type" className="text-sm font-medium">
+                  Talep Tipi
+                </label>
+                <Select
+                  id="queue-request-type"
+                  value={requestTypeId}
+                  onChange={handleRequestTypeChange}
+                >
+                  <option value="">Tümü</option>
+                  {visibleRequestTypes?.map((requestType) => (
+                    <option key={requestType.id} value={requestType.id}>
+                      {requestType.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-priority" className="text-sm font-medium">
+                  Öncelik
+                </label>
+                <Select
+                  id="queue-priority"
+                  value={priority}
+                  onChange={handlePriorityChange}
+                >
+                  <option value="">Tümü</option>
+                  {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-date-from" className="text-sm font-medium">
+                  Başlangıç Tarihi
+                </label>
+                <Input
+                  id="queue-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={handleDateFromChange}
+                />
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label htmlFor="queue-date-to" className="text-sm font-medium">
+                  Bitiş Tarihi
+                </label>
+                <Input id="queue-date-to" type="date" value={dateTo} onChange={handleDateToChange} />
+              </div>
+              {hasActiveFilters && (
+                <Button type="button" variant="outline" onClick={handleClearFilters}>
+                  Filtreleri Temizle
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {dateRangeError && (
+            <p role="alert" className="text-sm font-normal text-destructive">
+              Başlangıç tarihi bitiş tarihinden sonra olamaz
+            </p>
+          )}
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-request-type" className="text-sm font-medium">
-                Talep Tipi
+              <label htmlFor="queue-saved-filter" className="text-sm font-medium">
+                Kayıtlı Filtreler
               </label>
-              <select
-                id="queue-request-type"
-                className={SELECT_CLASSES}
-                value={requestTypeId}
-                onChange={handleRequestTypeChange}
+              <Select
+                id="queue-saved-filter"
+                value={appliedFilterName}
+                onChange={(event) => handleApplySavedFilter(event.target.value)}
               >
-                <option value="">Tümü</option>
-                {visibleRequestTypes?.map((requestType) => (
-                  <option key={requestType.id} value={requestType.id}>
-                    {requestType.name}
+                <option value="">Kayıtlı filtre seç</option>
+                {savedFilters.map((filter) => (
+                  <option key={filter.name} value={filter.name}>
+                    {filter.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={!appliedFilterName}
+            >
+              Sil
+            </Button>
             <div className="flex flex-1 flex-col gap-1.5">
-              <label htmlFor="queue-priority" className="text-sm font-medium">
-                Öncelik
+              <label htmlFor="queue-save-filter-name" className="text-sm font-medium">
+                Yeni Filtre Adı
               </label>
-              <select
-                id="queue-priority"
-                className={SELECT_CLASSES}
-                value={priority}
-                onChange={handlePriorityChange}
-              >
-                <option value="">Tümü</option>
-                {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <Input
+                id="queue-save-filter-name"
+                type="text"
+                placeholder="Filtre adı"
+                value={saveNameInput}
+                onChange={(event) => setSaveNameInput(event.target.value)}
+              />
             </div>
-            {hasActiveFilters && (
-              <Button type="button" variant="outline" onClick={handleClearFilters}>
-                Filtreleri Temizle
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSaveFilter}
+              disabled={!saveNameInput.trim()}
+            >
+              Bu Filtreyi Kaydet
+            </Button>
           </div>
 
           {canClaim && selectedIds.length > 0 && (
@@ -406,6 +595,25 @@ export default function Queue() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Filtreyi Sil</DialogTitle>
+            <DialogDescription>
+              {appliedFilterName} filtresini silmek istediğinize emin misiniz?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              Vazgeç
+            </Button>
+            <Button type="button" variant="destructive" onClick={handleDeleteSavedFilter}>
+              Evet, Sil
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

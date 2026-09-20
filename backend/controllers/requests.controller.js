@@ -60,6 +60,8 @@ async function getRequests(req, res) {
         request_type_id: req.query.request_type_id,
         priority: req.query.priority,
         assigned_to_me: req.query.assigned_to_me,
+        date_from: req.query.date_from,
+        date_to: req.query.date_to,
       },
       req.user
     );

@@ -127,6 +127,59 @@ describe('SocketContext', () => {
     expect(screen.getByText('no-socket')).toBeInTheDocument()
   })
 
+  // AC3: the backend rejects the handshake while the flag is on, so no socket
+  // is even attempted for a flagged session
+  it('does not create a socket for a session whose user must change their password', () => {
+    seedSession({ ...fakeUser, must_change_password: true })
+
+    render(
+      <AuthProvider>
+        <SocketProvider>
+          <Probe />
+        </SocketProvider>
+      </AuthProvider>,
+    )
+
+    expect(screen.getByText('no-socket')).toBeInTheDocument()
+    expect(mockIo).not.toHaveBeenCalled()
+  })
+
+  // AC4: changing the password doesn't change the token, so clearing the flag
+  // via updateUser() alone must create the socket
+  it('creates the socket once the must_change_password flag is cleared via updateUser', async () => {
+    const user = userEvent.setup()
+    seedSession({ ...fakeUser, must_change_password: true })
+
+    function ClearFlagButton() {
+      const { user: authUser, updateUser } = useAuth()
+      return (
+        <button
+          type="button"
+          onClick={() => authUser && updateUser({ ...authUser, must_change_password: false })}
+        >
+          clear flag
+        </button>
+      )
+    }
+
+    render(
+      <AuthProvider>
+        <SocketProvider>
+          <Probe />
+          <ClearFlagButton />
+        </SocketProvider>
+      </AuthProvider>,
+    )
+
+    expect(screen.getByText('no-socket')).toBeInTheDocument()
+    expect(mockIo).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'clear flag' }))
+
+    expect(mockIo).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('connected')).toBeInTheDocument()
+  })
+
   // useSocket must be used within a SocketProvider
   describe('when used outside a SocketProvider', () => {
     beforeEach(() => {

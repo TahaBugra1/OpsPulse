@@ -7,11 +7,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { usePageTitle } from '@/context/PageTitleContext'
 import { PRIORITY_LABELS, useCreateRequest, useRequestTypes } from '@/lib/requests'
 import { requestSchema, type RequestFormValues } from '@/lib/validation'
-
-const SELECT_CLASSES =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40'
 
 export default function NewRequest() {
   const navigate = useNavigate()
@@ -19,6 +18,7 @@ export default function NewRequest() {
   const { data: requestTypes, isPending, isError, error, refetch } = useRequestTypes()
   const mutation = useCreateRequest()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  usePageTitle('Yeni Talep')
 
   const form = useForm<RequestFormValues>({
     resolver: zodResolver(requestSchema),
@@ -40,7 +40,6 @@ export default function NewRequest() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">Yeni Talep</h1>
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -99,12 +98,11 @@ export default function NewRequest() {
                   render={({ field, fieldState }) => (
                     <Field data-invalid={!!fieldState.error}>
                       <FieldLabel htmlFor="new-request-type">Talep Tipi</FieldLabel>
-                      <select
+                      <Select
                         {...field}
                         id="new-request-type"
                         disabled={mutation.isPending}
                         aria-invalid={!!fieldState.error}
-                        className={SELECT_CLASSES}
                       >
                         <option value="">Seçiniz</option>
                         {requestTypes.map((requestType) => (
@@ -112,7 +110,7 @@ export default function NewRequest() {
                             {requestType.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                       <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
                     </Field>
                   )}
@@ -124,19 +122,18 @@ export default function NewRequest() {
                   render={({ field, fieldState }) => (
                     <Field data-invalid={!!fieldState.error}>
                       <FieldLabel htmlFor="new-request-priority">Öncelik</FieldLabel>
-                      <select
+                      <Select
                         {...field}
                         id="new-request-priority"
                         disabled={mutation.isPending}
                         aria-invalid={!!fieldState.error}
-                        className={SELECT_CLASSES}
                       >
                         {Object.entries(PRIORITY_LABELS).map(([value, label]) => (
                           <option key={value} value={value}>
                             {label}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                       <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
                     </Field>
                   )}

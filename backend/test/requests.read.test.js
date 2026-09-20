@@ -15,14 +15,23 @@ function validEmail() {
 // Registers a fresh throwaway EMPLOYEE and returns { id, token }.
 async function registerEmployee() {
   const email = validEmail();
+  // Registration now requires a department_id: services/auth.service.js enforces
+  // it at the application layer (deliberately not via a DB CHECK), so a body
+  // without one is a correct 400. Resolved here rather than hardcoded so the
+  // helper never assumes a department by name.
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
   const res = await request(app).post('/api/auth/register').send({
     name: 'Test',
     surname: 'Employee',
     email,
     password: 'sifre1234test',
+    department_id: deptRes.rows[0].id,
   });
   assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token };
+  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
 }
 
 async function deleteRequestCascade(requestId) {
@@ -556,4 +565,93 @@ test('GET /api/requests - invalid filter values are rejected, well-formed-but-un
     .set('Authorization', `Bearer ${employee.token}`);
   assert.equal(unknownTypeIdRes.status, 200, JSON.stringify(unknownTypeIdRes.body));
   assert.deepEqual(unknownTypeIdRes.body, []);
+});
+
+// ---------------------------------------------------------------------------
+// Queue date-range filter + saved filters (backend half) — queue-date-range-saved-filters task
+// ---------------------------------------------------------------------------
+
+// AC1 [Critical]: date_from/date_to filters to created_at within the range, INCLUSIVE
+// on both ends. Five fixtures are backdated via direct SQL (createRequestAs always
+// creates with created_at = now(), so this is the only way to control creation date):
+// one strictly before the range, one exactly on date_from, one strictly inside, one
+// exactly on date_to, and one strictly after — the boundary rows prove inclusivity,
+// the before/after rows prove exclusion.
+test('GET /api/requests?date_from=&date_to= - filters to created_at within the inclusive range', async (t) => {
+  const employee = await registerEmployee();
+
+  const before = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const fromBoundary = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const middle = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const toBoundary = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  const after = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  for (const res of [before, fromBoundary, middle, toBoundary, after]) {
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+  }
+
+  registerCleanup(t, employee, [
+    before.body.id,
+    fromBoundary.body.id,
+    middle.body.id,
+    toBoundary.body.id,
+    after.body.id,
+  ]);
+
+  await pool.query('UPDATE requests SET created_at = $1::timestamptz WHERE id = $2', [
+    '2019-12-25T12:00:00Z',
+    before.body.id,
+  ]);
+  await pool.query('UPDATE requests SET created_at = $1::timestamptz WHERE id = $2', [
+    '2020-01-01T12:00:00Z',
+    fromBoundary.body.id,
+  ]);
+  await pool.query('UPDATE requests SET created_at = $1::timestamptz WHERE id = $2', [
+    '2020-01-05T12:00:00Z',
+    middle.body.id,
+  ]);
+  await pool.query('UPDATE requests SET created_at = $1::timestamptz WHERE id = $2', [
+    '2020-01-10T12:00:00Z',
+    toBoundary.body.id,
+  ]);
+  await pool.query('UPDATE requests SET created_at = $1::timestamptz WHERE id = $2', [
+    '2020-01-15T12:00:00Z',
+    after.body.id,
+  ]);
+
+  const res = await request(app)
+    .get('/api/requests?date_from=2020-01-01&date_to=2020-01-10')
+    .set('Authorization', `Bearer ${employee.token}`);
+
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const ids = res.body.map((r) => r.id);
+  assert.ok(!ids.includes(before.body.id));
+  assert.ok(ids.includes(fromBoundary.body.id));
+  assert.ok(ids.includes(middle.body.id));
+  assert.ok(ids.includes(toBoundary.body.id));
+  assert.ok(!ids.includes(after.body.id));
+});
+
+// AC4 [High]: malformed date_from/date_to (fails DATE_REGEX) -> 400 'Geçersiz tarih değeri';
+// well-formed date_from > date_to -> 400 'Geçersiz tarih aralığı'.
+test('GET /api/requests - invalid date filter values are rejected', async (t) => {
+  const employee = await registerEmployee();
+  registerCleanup(t, employee, []);
+
+  const malformedDateRes = await request(app)
+    .get('/api/requests?date_from=not-a-date')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(malformedDateRes.status, 400);
+  assert.equal(malformedDateRes.body.message, 'Geçersiz tarih değeri');
+
+  const malformedDateToRes = await request(app)
+    .get('/api/requests?date_from=2020-01-01&date_to=15-01-2020')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(malformedDateToRes.status, 400);
+  assert.equal(malformedDateToRes.body.message, 'Geçersiz tarih değeri');
+
+  const invalidRangeRes = await request(app)
+    .get('/api/requests?date_from=2020-01-10&date_to=2020-01-01')
+    .set('Authorization', `Bearer ${employee.token}`);
+  assert.equal(invalidRangeRes.status, 400);
+  assert.equal(invalidRangeRes.body.message, 'Geçersiz tarih aralığı');
 });

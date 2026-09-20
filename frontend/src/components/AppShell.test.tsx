@@ -186,17 +186,17 @@ describe('AppShell', () => {
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Kuyruk', 'Talepler'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Kuyruk', 'Ekibim', 'Talepler'])
     expect(within(nav).queryByText('Kullanıcılar')).not.toBeInTheDocument()
   })
 
-  // AC4: ADMIN sidebar shows all four, in "Genel Bakış", "Talepler", "Kuyruk", "Kullanıcılar" order
-  it('shows "Talepler", "Kuyruk", "Kullanıcılar" in that order for an ADMIN user', () => {
+  // AC4: ADMIN sidebar shows all five, in "Genel Bakış", "Talepler", "Kuyruk", "Kullanıcılar", "Katalog" order
+  it('shows "Talepler", "Kuyruk", "Kullanıcılar", "Katalog" in that order for an ADMIN user', () => {
     renderShell({ ...fakeUser, role: 'ADMIN' })
 
     const nav = screen.getByRole('navigation')
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Talepler', 'Kuyruk', 'Kullanıcılar'])
+    expect(links.map((link) => link.textContent)).toEqual(['Genel Bakış', 'Talepler', 'Kuyruk', 'Kullanıcılar', 'Katalog'])
   })
 
   // AC5: clicking "Çıkış Yap" calls logout (observed via cleared session storage)
@@ -255,10 +255,12 @@ describe('AppShell', () => {
     expect(screen.queryByRole('menuitem', { name: 'Çıkış Yap' })).not.toBeInTheDocument()
   })
 
-  // AC7: active nav link is visually marked (checked as a standalone class token, since
-  // the inactive/base className also contains "hover:bg-sidebar-accent" as a substring)
+  // AC7: active nav link is marked. NavLink sets aria-current="page" on the
+  // active link automatically; asserting that instead of a specific class
+  // keeps this test stable across visual redesigns of the active treatment.
   function hasActiveClass(element: HTMLElement) {
-    return element.className.split(/\s+/).includes('bg-sidebar-primary')
+    const link = element.closest('a')
+    return link?.getAttribute('aria-current') === 'page'
   }
 
   it('marks the current route\'s nav link active and leaves others inactive', () => {

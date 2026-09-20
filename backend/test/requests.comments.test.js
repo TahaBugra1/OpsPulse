@@ -15,14 +15,23 @@ function validEmail() {
 // Registers a fresh throwaway EMPLOYEE and returns { id, token, email }.
 async function registerEmployee(name = 'Test', surname = 'Employee') {
   const email = validEmail();
+  // Registration now requires a department_id: services/auth.service.js enforces
+  // it at the application layer (deliberately not via a DB CHECK), so a body
+  // without one is a correct 400. Resolved here rather than hardcoded so the
+  // helper never assumes a department by name.
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
   const res = await request(app).post('/api/auth/register').send({
     name,
     surname,
     email,
     password: 'sifre1234test',
+    department_id: deptRes.rows[0].id,
   });
   assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token };
+  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
 }
 
 async function deleteRequestCascade(requestId) {
@@ -763,4 +772,89 @@ test('PATCH and DELETE /api/requests/:id/comments/:commentId - still succeed aft
     .set('Authorization', `Bearer ${employee.token}`)
     .send();
   assert.equal(deleteOnRejected.status, 200, JSON.stringify(deleteOnRejected.body));
+});
+
+// AC1/AC3 (ADMIN comment moderation): an ADMIN deleting a comment they did not author -> 200,
+// tombstone applied (fixed placeholder content, is_deleted true), row still exists in the DB.
+// ADMIN has no department scoping anywhere in this codebase, so this single case also proves
+// AC3 (no scope restriction) - there is no department-specific variant to add on top of it.
+test('DELETE /api/requests/:id/comments/:commentId - ADMIN deleting a non-authored comment gets 200 tombstone, row still exists in DB', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'Employee comment, not admin-authored.' });
+  assert.equal(commentRes.status, 201);
+
+  const deleteRes = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+
+  assert.equal(deleteRes.status, 200, JSON.stringify(deleteRes.body));
+  assert.equal(deleteRes.body.content, 'Bu yorum silindi');
+  assert.equal(deleteRes.body.is_deleted, true);
+
+  const dbRow = await pool.query('SELECT * FROM request_comments WHERE id = $1', [commentRes.body.id]);
+  assert.equal(dbRow.rows.length, 1);
+  assert.equal(dbRow.rows[0].content, 'Bu yorum silindi');
+  assert.equal(dbRow.rows[0].is_deleted, true);
+});
+
+// AC4 (ADMIN comment moderation): ADMIN attempting to delete an already-deleted comment -> 409,
+// same message as the non-admin case. AC7: no new request_history row is created by an ADMIN's
+// comment delete (comment deletion is not a logged transition, admin or not).
+test('DELETE /api/requests/:id/comments/:commentId - ADMIN deleting an already-deleted comment gets 409, and no request_history row is added', async (t) => {
+  const employee = await registerEmployee();
+
+  const created = await createRequestAs(employee.token, passwordResetTypeId, 'LOW');
+  assert.equal(created.status, 201);
+  registerCleanup(t, employee, [created.body.id]);
+
+  const commentRes = await request(app)
+    .post(`/api/requests/${created.body.id}/comments`)
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({ content: 'To be deleted by admin twice.' });
+  assert.equal(commentRes.status, 201);
+
+  const historyCountBefore = await pool.query(
+    'SELECT COUNT(*) FROM request_history WHERE request_id = $1',
+    [created.body.id]
+  );
+
+  const firstDelete = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+  assert.equal(firstDelete.status, 200, JSON.stringify(firstDelete.body));
+
+  const historyCountAfterFirstDelete = await pool.query(
+    'SELECT COUNT(*) FROM request_history WHERE request_id = $1',
+    [created.body.id]
+  );
+  assert.equal(
+    Number(historyCountAfterFirstDelete.rows[0].count),
+    Number(historyCountBefore.rows[0].count)
+  );
+
+  const secondDelete = await request(app)
+    .delete(`/api/requests/${created.body.id}/comments/${commentRes.body.id}`)
+    .set('Authorization', `Bearer ${adminToken}`)
+    .send();
+  assert.equal(secondDelete.status, 409, JSON.stringify(secondDelete.body));
+  assert.ok(/zaten silinmiş/.test(secondDelete.body.message ?? ''), JSON.stringify(secondDelete.body));
+
+  const historyCountAfterSecondDelete = await pool.query(
+    'SELECT COUNT(*) FROM request_history WHERE request_id = $1',
+    [created.body.id]
+  );
+  assert.equal(
+    Number(historyCountAfterSecondDelete.rows[0].count),
+    Number(historyCountAfterFirstDelete.rows[0].count)
+  );
 });

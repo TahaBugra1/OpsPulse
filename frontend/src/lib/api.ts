@@ -9,6 +9,8 @@ const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
 export const AUTH_LOGIN_PATH = '/api/auth/login'
 export const AUTH_GOOGLE_PATH = '/api/auth/google'
+export const AUTH_REGISTER_PATH = '/api/auth/register'
+export const AUTH_DEPARTMENTS_PATH = '/api/auth/departments'
 
 let unauthorizedHandler: (() => void) | null = null
 
@@ -55,7 +57,16 @@ async function apiRequest<T>(
   const data = isJson ? await response.json().catch(() => null) : null
 
   if (!response.ok) {
-    if (response.status === 401 && path !== AUTH_LOGIN_PATH && path !== AUTH_GOOGLE_PATH) {
+    const isPasswordChangeRequired =
+      response.status === 403 &&
+      data !== null &&
+      typeof data === 'object' &&
+      'code' in data &&
+      data.code === 'PASSWORD_CHANGE_REQUIRED'
+    if (
+      (response.status === 401 && path !== AUTH_LOGIN_PATH && path !== AUTH_GOOGLE_PATH) ||
+      isPasswordChangeRequired
+    ) {
       unauthorizedHandler?.()
     }
 

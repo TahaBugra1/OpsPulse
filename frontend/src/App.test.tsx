@@ -10,13 +10,15 @@ vi.mock('@react-oauth/google', () => ({
   GoogleLogin: () => <div>MockGoogleLogin</div>,
 }))
 
+// A complete EMPLOYEE: department_id must be non-null, otherwise ProtectedRoute
+// now (correctly) diverts every protected route to /complete-profile.
 const fakeUser: AuthUser = {
   id: 'user-1',
   name: 'Taha',
   surname: null,
   email: 'taha@example.com',
   role: 'EMPLOYEE',
-  department_id: null,
+  department_id: 'dept-1',
 }
 
 function seedSession(token = 'tok-123', user: AuthUser = fakeUser) {

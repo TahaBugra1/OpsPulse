@@ -11,11 +11,14 @@ import { createSocket } from '@/lib/socket'
 const SocketContext = createContext<Socket | null | undefined>(undefined)
 
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [socket, setSocket] = useState<Socket | null>(null)
+  // The backend rejects the handshake while the flag is on, and changing the
+  // password doesn't change the token — so the flag is part of the key.
+  const mustChangePassword = user?.must_change_password === true
 
   useEffect(() => {
-    if (!token) {
+    if (!token || mustChangePassword) {
       setSocket(null)
       return
     }
@@ -24,7 +27,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     return () => {
       s.disconnect()
     }
-  }, [token])
+  }, [token, mustChangePassword])
 
   return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>
 }

@@ -13,6 +13,8 @@ export interface AuthUser {
   email: string
   role: 'EMPLOYEE' | 'DEPARTMENT_AUTHORITY' | 'ADMIN'
   department_id: string | null
+  // Optional: sessions persisted before this field existed lack it (missing = false).
+  must_change_password?: boolean
 }
 
 const TOKEN_KEY = 'opspulse_token'

@@ -16,14 +16,23 @@ function validEmail() {
 // Registers a fresh throwaway EMPLOYEE and returns { id, token }.
 async function registerEmployee() {
   const email = validEmail();
+  // Registration now requires a department_id: services/auth.service.js enforces
+  // it at the application layer (deliberately not via a DB CHECK), so a body
+  // without one is a correct 400. Resolved here rather than hardcoded so the
+  // helper never assumes a department by name.
+  const deptRes = await pool.query(
+    'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
   const res = await request(app).post('/api/auth/register').send({
     name: 'Test',
     surname: 'Employee',
     email,
     password: 'sifre1234test',
+    department_id: deptRes.rows[0].id,
   });
   assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token };
+  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
 }
 
 async function deleteRequestCascade(requestId) {
@@ -792,4 +801,89 @@ test('GET /api/requests?assigned_to_me=true - combines with request_type_id and 
   const nonMatchingTypeIds = nonMatchingTypeRes.body.map((r) => r.id);
   assert.ok(!nonMatchingTypeIds.includes(matchingReq.body.id));
   assert.ok(!nonMatchingTypeIds.includes(wrongPriorityReq.body.id));
+});
+
+// AC7: request routing is unaffected by the new mandatory employee department.
+// EMPLOYEEs now always HAVE a department, so this test explicitly picks a
+// request type routed to a DIFFERENT department and proves requests.department_id
+// still comes from request_types.department_id alone - never from the creator.
+test('POST /api/requests - department_id comes from the request TYPE, not from the creating employee department', async (t) => {
+  const employee = await registerEmployee();
+  assert.notEqual(employee.department_id, null, 'a self-registered EMPLOYEE now always has a department');
+
+  // A request type whose department differs from the employee's own, resolved
+  // dynamically so the distinction can never quietly collapse.
+  const crossDeptType = await pool.query(
+    `SELECT rt.id, rt.department_id
+       FROM request_types rt
+      WHERE rt.is_active = true AND rt.department_id <> $1
+      ORDER BY rt.name ASC
+      LIMIT 1`,
+    [employee.department_id]
+  );
+  assert.ok(
+    crossDeptType.rows[0],
+    'need an active request type in a department other than the employee - run `npm run seed` first'
+  );
+  const typeId = crossDeptType.rows[0].id;
+  const typeDepartmentId = crossDeptType.rows[0].department_id;
+  assert.notEqual(typeDepartmentId, employee.department_id);
+
+  const res = await createRequestAs(employee.token, typeId, 'MEDIUM');
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  registerCleanup(t, employee, [res.body.id]);
+
+  assert.equal(res.body.department_id, typeDepartmentId, 'routing must follow the request type');
+  assert.notEqual(
+    res.body.department_id,
+    employee.department_id,
+    "the creator's own department must never leak into routing"
+  );
+
+  // Assert from the row, not just the response projection.
+  const row = await pool.query('SELECT department_id FROM requests WHERE id = $1', [res.body.id]);
+  assert.equal(row.rows[0].department_id, typeDepartmentId);
+});
+
+// AC7 (negative half): a client-supplied department_id in the create body is
+// ignored outright - it is a write-once server-side snapshot of the type's
+// department, never client input.
+test('POST /api/requests - a client-supplied department_id in the body is ignored', async (t) => {
+  const employee = await registerEmployee();
+
+  const crossDeptType = await pool.query(
+    `SELECT rt.id, rt.department_id
+       FROM request_types rt
+      WHERE rt.is_active = true AND rt.department_id <> $1
+      ORDER BY rt.name ASC
+      LIMIT 1`,
+    [employee.department_id]
+  );
+  assert.ok(
+    crossDeptType.rows[0],
+    'need an active request type in a department other than the employee - run `npm run seed` first'
+  );
+  const typeId = crossDeptType.rows[0].id;
+  const typeDepartmentId = crossDeptType.rows[0].department_id;
+
+  const res = await request(app)
+    .post('/api/requests')
+    .set('Authorization', `Bearer ${employee.token}`)
+    .send({
+      title: 'Test request',
+      description: 'Test request description',
+      request_type_id: typeId,
+      // Both a plausible-but-wrong value (the creator's own department) and the
+      // shape a client would try to force are rejected the same way: ignored.
+      department_id: employee.department_id,
+    });
+
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  registerCleanup(t, employee, [res.body.id]);
+
+  assert.equal(res.body.department_id, typeDepartmentId);
+  assert.notEqual(res.body.department_id, employee.department_id);
+
+  const row = await pool.query('SELECT department_id FROM requests WHERE id = $1', [res.body.id]);
+  assert.equal(row.rows[0].department_id, typeDepartmentId);
 });

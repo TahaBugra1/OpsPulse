@@ -79,9 +79,11 @@ DEPARTMENT_AUTHORITY  — sees only their managed department's requests, claims/
 ADMIN                 — sees everything, manages users, system-wide dashboard
 ```
 
-Registration NEVER allows selecting a role. All self-registration (email/password or Google) produces `role = EMPLOYEE`. Admins and department authorities are created only via seed data or an Admin-only user-management screen — never through the public registration form. This is a deliberate privilege-escalation defense, not an oversight; do not add a role dropdown to registration under any circumstance.
+Registration NEVER allows selecting a role. All self-registration (email/password or Google) produces `role = EMPLOYEE`. ADMIN exists only via seed data — never created through the app itself, by anyone, under any circumstance. DEPARTMENT_AUTHORITY is created only through the ADMIN-only user-management screen (`/admin/users`), which can also create EMPLOYEE accounts. This is a deliberate privilege-escalation defense, not an oversight; do not add a role dropdown to registration under any circumstance.
 
-`users.department_id` is nullable in general, but `CHECK`-enforced `NOT NULL` specifically for `DEPARTMENT_AUTHORITY` (a NULL department here silently breaks that officer's own "my department's requests" query — NULL matches nothing in SQL).
+`users.department_id` is nullable at the **database** level for everyone except `DEPARTMENT_AUTHORITY` (`CHECK`-enforced `NOT NULL` there — a NULL department here silently breaks that officer's own "my department's requests" query, NULL matches nothing in SQL). For **EMPLOYEE**, a department is required too, but deliberately enforced at the **application layer**, not via a DB constraint: self-registration and ADMIN-created accounts collect it directly; a first-time Google sign-in creates the row with `department_id = NULL` (preserving `loginWithGoogle()`'s single-atomic-call architecture) and forces the user through a `/complete-profile` screen before any other page is reachable, both client-side (`ProtectedRoute`) and server-side (every REST route except the completion endpoint itself). Do not "simplify" this into a DB-level `NOT NULL` for EMPLOYEE — it was deliberately rejected because it's incompatible with the Google flow's transient NULL row. EMPLOYEE's `department_id` is metadata only and never affects request routing or authorization (see `requests.department_id` below) — a DEPARTMENT_AUTHORITY can see the EMPLOYEEs in their own department (read-only "Ekibim" view), but that view has no bearing on who can open which request.
+
+ADMIN-created accounts (EMPLOYEE or DEPARTMENT_AUTHORITY) never have a password typed by the ADMIN — the backend generates a one-time random temporary password (shown once, never logged or persisted as plaintext) and sets `users.must_change_password = true`. While that flag is true, the backend rejects every authenticated REST request except the password-change endpoint itself, and rejects the Socket.io handshake — enforced server-side, not just via a frontend redirect (see SECURITY below). An ADMIN can also force a reset (new temp password, flag re-armed), which immediately invalidates any already-open session on its next request.
 
 ---
 
@@ -102,6 +104,7 @@ Non-obvious design decisions you must preserve, not "clean up":
 - Two `CHECK` constraints exist as **defense-in-depth backstops**, not the primary enforcement — the primary enforcement is always in the service layer so the user gets a clean 4xx error, not a raw constraint violation: `requests` (status/assigned_to consistency: OPEN⇒unassigned, ASSIGNED/IN_PROGRESS/COMPLETED⇒assigned, REJECTED⇒either) and `request_history` (`note` required when `new_value = 'REJECTED'`).
 - `users.password_hash` and `users.google_id` are both nullable (a user can be local-only, Google-only, or both), guarded by `CHECK (password_hash IS NOT NULL OR google_id IS NOT NULL)` — an account with neither is an account nobody can ever log into.
 - **`users.surname` is nullable, not required** — kept because Google OAuth supplies `given_name`/`family_name` as separate fields natively, but some Google accounts omit `family_name`; making it `NOT NULL` would lock those users out of registration entirely.
+- **`users.must_change_password`** (`BOOLEAN NOT NULL DEFAULT false`) — true when an ADMIN provisioned or reset the account with a backend-generated temporary password; cleared when the user sets their own. Defaults to `false` and was added with **no backfill** (`db/migrations/002_add_must_change_password.sql`) — existing accounts (self-registered, Google, seed) can't be selectively identified as "admin-typed-password" accounts, so none were retroactively flagged. Enforced in `authMiddleware` and the Socket.io handshake, not just the frontend — see SECURITY.
 
 ---
 
@@ -141,6 +144,7 @@ Also validate in the service layer (not the database): `assigned user.role = DEP
 - **AI endpoints need their own rate limit**, independent of the login rate limiter — LLM calls are slow and cost money per call.
 - **AI must never be authoritative**: the LLM suggests `request_type`/`priority`; the backend validates the suggestion against real `request_types` rows before ever showing it to the user (never trust raw LLM output as a foreign key); the user can accept or override; if the LLM call fails or times out, request creation must still work normally via manual selection — AI is never a blocking dependency.
 - **Prompt injection**: when sending request descriptions/comments/history to an LLM (classification, summary), treat all embedded user content as data, never as instructions, in the prompt template.
+- **A `must_change_password` account is blocked everywhere except one route.** `authMiddleware` re-reads the flag from the DB on every request (same pattern as `is_active`) and rejects with a controlled 403 (`code: 'PASSWORD_CHANGE_REQUIRED'`) unless the request is exactly `PATCH /api/users/me/password` — an exact method+path match, never a prefix. The Socket.io handshake rejects the same flag the same way. The frontend's forced `/change-password` redirect is UX only; the actual gate is backend-authoritative, consistent with the rule above. Do not widen the exemption beyond that one route.
 - **Real-time (Socket.io) needs its own authentication and authorization** — REST's object-level authorization does not automatically extend to WebSocket events. Authenticate the socket connection with JWT at handshake. Use role/department-scoped rooms (an EMPLOYEE's socket only receives events for their own requests/notifications; a DEPARTMENT_AUTHORITY's only for their managed department; ADMIN can receive system-wide). **Never use unrestricted global broadcast** — design this scoping in from the first line of real-time code, not as a retrofit.
 - CORS restricted to the actual client origin (no wildcard). Helmet + express-rate-limit on the whole API, plus the AI-specific limiter above.
 
@@ -219,20 +223,27 @@ see docs/atdd_pipeline_usage_guide.md)
 
 ## CURRENT PROJECT STATE
 
-**Database — verified.** `db/schema.sql` executed against a local PostgreSQL instance (no Docker — a local install was already available). Tables confirmed visible in pgAdmin.
+_Last verified accurate: 2026-09-16. This section is a snapshot, not a promise — if it disagrees with the actual code, the code wins; flag the mismatch rather than trusting this blindly on a long-running task._
 
-**Backend skeleton — verified.** `package.json`, `.env`/`.env.example`, `routes/`/`controllers/`/`services/`/`middleware/` per Backend Architecture above. `GET /health` implemented and confirmed working: checks a real DB connection via a service function (not just pool existence), returns `200 {status:"ok", db:"connected"}` or `503` on failure, no auth middleware attached.
+**Database — verified**, including two migrations beyond the original `schema.sql` (`db/migrations/001_add_comment_updated_at.sql`, `002_add_must_change_password.sql`). `db/schema.dbml`/`db/db.png` are kept in sync with `schema.sql` — check they still match before trusting the diagram on sight.
 
-**In progress — email/password authentication**, running through the full `atdd-pipeline` (first task to do so). Status:
-- `artifacts/email-password-auth/atdd.md` written: 9 Acceptance Criteria (3 Critical, 4 High, 2 Medium), 85% coverage target, <300ms performance target, test strategy 70% unit / 20% integration / 10% E2E (E2E marked N/A for now — no frontend yet, will be filled in with Playwright once it exists).
-- Completion criterion for this task is **stricter than default**: automated tests + `/verify` passing is NOT sufficient by itself — manual curl/Postman verification is also required before this task is considered done. This was a deliberate choice for this specific task (first pipeline run, auth is the highest-consequence category of bug), not a new standing rule for every future task.
-- Currently paused at: reviewing `atdd.md`'s 9 ACs before proceeding to `/plan`.
+**Guaranteed target — fully shipped:** `CORE + ANALYTICS 2A + REAL-TIME 3A + REAL-TIME 3B`. And past that, so is everything else in "Upgrade Layers" except AI/RAG:
 
-**Not started:** Google OAuth (separate, isolated `/atdd` task, comes after email/password auth is fully verified and committed), the centralized request service (`createRequest`/`claimRequest`/`changeRequestStatus`/`changePriority` — comes right after auth, since these functions need an authenticated user's ID), everything in "Upgrade Layers" above.
+- **Core**: email/password auth, Google OAuth, the centralized request service (`createRequest`/`claimRequest`/`changeRequestStatus`/`changePriority`), the full request lifecycle (create → claim → status/priority changes → comments with edit/tombstone-delete → ADMIN moderation/bulk-delete of comments), notifications, department-scoped queue.
+- **Analytics 2A, 2B, and 2C** — all three, not just 2A: summary cards/SLA compliance/avg resolution time/department workload (2A), distribution + volume-over-time charts (2B), and bottleneck/overload detection (2C, `getBottlenecks` in `analytics.service.js`) are all real, working queries — none are stubs.
+- **Real-Time 3A, 3B, and 3C** — all three: live Request Detail updates, the live notification badge, and the authority queue's live claim-removal (`request:addedToQueue`/`request:removedFromQueue` via department-scoped Socket.io rooms) are all implemented.
+- **Beyond the original blueprint**, added via the full ATDD pipeline after the upgrade layers: queue date-range + saved filters; a frontend design-system pass (design tokens, `AppShell` nav/header, a shared `Select`/`PageHeader` — dark mode was explicitly deferred and is still not done); `employee-department-requirement` (EMPLOYEE department, app-layer-enforced, see ROLES above); `department-team-view` (DEPARTMENT_AUTHORITY's read-only "Ekibim" view of their own department's EMPLOYEEs); `admin-user-provisioning` (ADMIN creates EMPLOYEE/DEPARTMENT_AUTHORITY with a backend-generated temporary password, forced password-change gate, ADMIN reset, voluntary Profile change — see ROLES/SECURITY above).
+
+**Not started — genuinely nothing left except the AI layer and RAG**, both already explicitly "upside, not requirement" per PROJECT VISION: AI Classification, AI Summary, AI Priority Rationale, RAG/pgvector. Nothing else from the original blueprint is outstanding.
+
+**Known, deliberately deferred, non-blocking items:**
+- Dark mode / theme toggle (frontend design-pass backlog item, `next-themes` already installed as a dependency but unused).
+- A stale seed/test row occasionally left behind by a live-Playwright verification run gets cleaned up manually after each such run — if you find an unfamiliar `test-%`/`verify-%`/`playwright.%` email in `users`, it's very likely exactly that; confirm zero references (`requests`/`request_comments`/`request_history`/`notifications`) before deleting, and never delete a row you didn't personally just create.
 
 ## NEXT STEPS
 
-1. Finish reviewing `artifacts/email-password-auth/atdd.md`, confirming it covers: role always forced to EMPLOYEE regardless of request body, `rememberMe` → JWT lifetime (1h/7d), `is_active` re-checked from DB on every request (not trusted from JWT), login rate-limiting actually applied, `password_hash` never present in any response, case-insensitive email handling not fighting `citext`.
-2. `/plan` → `/code-copilot` → `/test-copilot` → `/verify` → manual verification (per this task's stricter completion criterion) → `/red-team` → `/commit`.
-3. Then: Google OAuth (isolated `/atdd` task).
-4. Then: the centralized request service.
+No committed next task — the last three tasks (`employee-department-requirement` → `department-team-view` → `admin-user-provisioning`) were a user-approved sequence that is now fully shipped, verified, red-teamed, and pushed to `develop`. Candidates for the next `/atdd`, in no particular priority (ask the user, don't assume):
+
+1. **AI Classification** (`Upgrade Layers` item 8) — the only remaining item from the original blueprint, and only worth starting if the user wants to spend remaining time on it; the guaranteed target is already fully protected regardless.
+2. **Dark mode** — the one explicitly-deferred item from the design-system pass.
+3. Whatever new feature the user names next — this file will go stale again the moment that happens, so re-verify this section against the real code (`git log`, a quick grep) rather than trusting it if a lot of work has happened since 2026-09-16.

@@ -20,6 +20,7 @@ function toPublicUser(row) {
     email: row.email,
     role: row.role,
     department_id: row.department_id,
+    must_change_password: row.must_change_password,
   };
 }
 
@@ -35,7 +36,7 @@ function emailDomain(email) {
   return email.slice(email.indexOf('@') + 1).toLowerCase();
 }
 
-async function register({ name, surname, email, password }) {
+async function register({ name, surname, email, password, department_id }) {
   if (!EMAIL_RE.test(email || '')) {
     fail(400, 'Geçersiz email formatı');
   }
@@ -68,15 +69,32 @@ async function register({ name, surname, email, password }) {
     fail(400, 'Soyad en fazla 150 karakter olabilir');
   }
 
+  if (!department_id) {
+    fail(400, 'Departman seçilmeli');
+  }
+
+  let dept;
+  try {
+    dept = await pool.query('SELECT id FROM departments WHERE id = $1 AND is_active = true', [department_id]);
+  } catch (dbErr) {
+    if (dbErr.code === '22P02') {
+      fail(400, 'Geçersiz departman');
+    }
+    fail(500, 'Kayıt oluşturulamadı, lütfen tekrar deneyin');
+  }
+  if (dept.rows.length === 0) {
+    fail(400, 'Geçersiz departman');
+  }
+
   const passwordHash = await bcrypt.hash(password, 10);
 
   let result;
   try {
     result = await pool.query(
-      `INSERT INTO users (name, surname, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, 'EMPLOYEE')
-       RETURNING id, name, surname, email, role, department_id`,
-      [normalizedName.value, normalizedSurname.value, email, passwordHash]
+      `INSERT INTO users (name, surname, email, password_hash, role, department_id)
+       VALUES ($1, $2, $3, $4, 'EMPLOYEE', $5)
+       RETURNING id, name, surname, email, role, department_id, must_change_password`,
+      [normalizedName.value, normalizedSurname.value, email, passwordHash, department_id]
     );
   } catch (dbErr) {
     if (dbErr.code === '23505') {
@@ -97,7 +115,7 @@ async function login({ email, password, rememberMe }) {
   let result;
   try {
     result = await pool.query(
-      'SELECT id, name, surname, email, password_hash, role, department_id, is_active FROM users WHERE email = $1',
+      'SELECT id, name, surname, email, password_hash, role, department_id, is_active, must_change_password FROM users WHERE email = $1',
       [email]
     );
   } catch (dbErr) {
@@ -134,7 +152,7 @@ async function loginWithGoogle({ id_token, rememberMe }, verifyFn = verifyGoogle
   let result;
   try {
     result = await pool.query(
-      'SELECT id, name, surname, email, role, department_id, is_active FROM users WHERE email = $1',
+      'SELECT id, name, surname, email, role, department_id, is_active, must_change_password FROM users WHERE email = $1',
       [claims.email]
     );
   } catch (dbErr) {
@@ -153,7 +171,7 @@ async function loginWithGoogle({ id_token, rememberMe }, verifyFn = verifyGoogle
       insertResult = await pool.query(
         `INSERT INTO users (name, surname, email, google_id, role)
          VALUES ($1, $2, $3, $4, 'EMPLOYEE')
-         RETURNING id, name, surname, email, role, department_id`,
+         RETURNING id, name, surname, email, role, department_id, must_change_password`,
         [claims.given_name, claims.family_name || null, claims.email, claims.sub]
       );
     } catch (dbErr) {

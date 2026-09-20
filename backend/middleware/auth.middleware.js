@@ -18,7 +18,7 @@ async function authMiddleware(req, res, next) {
 
   let result;
   try {
-    result = await pool.query('SELECT id, role, department_id, is_active FROM users WHERE id = $1', [payload.sub]);
+    result = await pool.query('SELECT id, role, department_id, is_active, must_change_password FROM users WHERE id = $1', [payload.sub]);
   } catch (dbErr) {
     return res.status(500).json({ status: 'error', message: 'Bir hata oluştu' });
   }
@@ -26,6 +26,18 @@ async function authMiddleware(req, res, next) {
 
   if (!row || !row.is_active) {
     return res.status(403).json({ status: 'error', message: 'Hesap aktif değil' });
+  }
+
+  // Flag checked first; the one exempt route is matched exactly (fails closed).
+  if (
+    row.must_change_password &&
+    !(req.method === 'PATCH' && req.baseUrl === '/api/users' && req.path === '/me/password')
+  ) {
+    return res.status(403).json({
+      status: 'error',
+      message: 'Devam etmek için şifrenizi değiştirmeniz gerekiyor',
+      code: 'PASSWORD_CHANGE_REQUIRED',
+    });
   }
 
   req.user = { id: row.id, role: row.role, department_id: row.department_id };
