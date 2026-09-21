@@ -163,4 +163,8 @@
   html {
     @apply font-sans;
     }
+  [data-slot="select"] option {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+    }
 }
