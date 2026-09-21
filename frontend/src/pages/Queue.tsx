@@ -549,7 +549,14 @@ export default function Queue() {
       </Card>
 
       {canClaim && (
-        <Dialog open={rejectOpen} onOpenChange={(open) => setRejectOpen(open)}>
+        <Dialog
+          open={rejectOpen}
+          onOpenChange={(open, eventDetails) => {
+            if (eventDetails.reason === 'escape-key') return
+            setRejectOpen(open)
+          }}
+          disablePointerDismissal
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Seçilen Talepleri Reddet</DialogTitle>
@@ -596,7 +603,14 @@ export default function Queue() {
         </Dialog>
       )}
 
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open, eventDetails) => {
+          if (eventDetails.reason === 'escape-key') return
+          setDeleteDialogOpen(open)
+        }}
+        disablePointerDismissal
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Filtreyi Sil</DialogTitle>

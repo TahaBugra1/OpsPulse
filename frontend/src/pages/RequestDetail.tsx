@@ -579,10 +579,12 @@ export default function RequestDetail() {
 
               <Dialog
                 open={rejectOpen}
-                onOpenChange={(open) => {
+                onOpenChange={(open, eventDetails) => {
+                  if (eventDetails.reason === 'escape-key') return
                   setRejectOpen(open)
                   if (!open) setActionError(null)
                 }}
+                disablePointerDismissal
               >
                 <DialogContent>
                   <DialogHeader>
@@ -635,7 +637,14 @@ export default function RequestDetail() {
                 </DialogContent>
               </Dialog>
 
-              <Dialog open={bulkDeleteConfirmOpen} onOpenChange={(open) => setBulkDeleteConfirmOpen(open)}>
+              <Dialog
+                open={bulkDeleteConfirmOpen}
+                onOpenChange={(open, eventDetails) => {
+                  if (eventDetails.reason === 'escape-key') return
+                  setBulkDeleteConfirmOpen(open)
+                }}
+                disablePointerDismissal
+              >
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Yorumları Sil</DialogTitle>
