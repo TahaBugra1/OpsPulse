@@ -1,5 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google'
+import { Eye, EyeOff, Moon, Sun } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
@@ -21,9 +23,11 @@ interface LoginResponse {
 export default function Login() {
   const auth = useAuth()
   const navigate = useNavigate()
+  const { resolvedTheme, setTheme } = useTheme()
   const [rememberMe, setRememberMe] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -82,7 +86,15 @@ export default function Login() {
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center bg-background p-6">
+    <main className="relative flex min-h-svh items-center justify-center bg-background p-6">
+      <button
+        type="button"
+        onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+        aria-label={resolvedTheme === 'dark' ? 'Aydınlık moda geç' : 'Karanlık moda geç'}
+        className="absolute top-4 right-4 flex size-9 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground"
+      >
+        {resolvedTheme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      </button>
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl">Giriş Yap</CardTitle>
@@ -119,14 +131,26 @@ export default function Login() {
                 render={({ field, fieldState }) => (
                   <Field data-invalid={!!fieldState.error}>
                     <FieldLabel htmlFor="login-password">Şifre</FieldLabel>
-                    <Input
-                      {...field}
-                      id="login-password"
-                      type="password"
-                      autoComplete="current-password"
-                      disabled={loading}
-                      aria-invalid={!!fieldState.error}
-                    />
+                    <div className="relative">
+                      <Input
+                        {...field}
+                        id="login-password"
+                        type={showPassword ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        disabled={loading}
+                        aria-invalid={!!fieldState.error}
+                        className="pr-8"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        aria-label={showPassword ? 'Şifreyi gizle' : 'Şifreyi göster'}
+                        className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground outline-none hover:text-foreground"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                      </button>
+                    </div>
                     <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
                   </Field>
                 )}
