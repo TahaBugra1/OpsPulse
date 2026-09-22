@@ -7,6 +7,7 @@ const request = require('supertest');
 
 const app = require('../server');
 const pool = require('../services/db');
+const { register } = require('../services/auth.service');
 
 // process.env.ALLOWED_EMAIL_DOMAIN is populated once ../server (which loads
 // dotenv) has been required above.
@@ -69,14 +70,13 @@ test('POST /api/auth/login - rememberMe true issues a ~7 day token, false/omitte
   t.after(() => deleteUserByEmail(email));
   const department = await activeDepartment();
 
-  const registerRes = await request(app).post('/api/auth/register').send({
+  await register({
     name: 'Grace',
     surname: 'Hopper',
     email,
     password,
     department_id: department.id,
   });
-  assert.equal(registerRes.status, 201);
 
   const rememberRes = await request(app).post('/api/auth/login').send({
     email,
@@ -171,15 +171,14 @@ test('POST /api/auth/register - duplicate email returns 409 with a message', asy
 test('POST /api/auth/register - disallowed email domain returns 400 and inserts no row', async () => {
   const email = `test-${randomUUID()}@not-allowed-domain.example`;
 
-  const res = await request(app).post('/api/auth/register').send({
-    name: 'Bad',
-    surname: 'Domain',
-    email,
-    password: 'supersecret1',
-  });
-
-  assert.equal(res.status, 400);
-  assert.equal(typeof res.body.message, 'string');
+  await assert.rejects(
+    register({ name: 'Bad', surname: 'Domain', email, password: 'supersecret1' }),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.equal(typeof err.message, 'string');
+      return true;
+    }
+  );
 
   const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
   assert.equal(check.rows.length, 0);
@@ -217,16 +216,15 @@ test('POST /api/auth/login - malformed email returns 400 with a message', async 
 test('POST /api/auth/register - password shorter than 8 characters returns 400 with a message', async () => {
   const email = validEmail();
 
-  const res = await request(app).post('/api/auth/register').send({
-    name: 'Short',
-    surname: 'Password',
-    email,
-    password: 'short1',
-  });
-
-  assert.equal(res.status, 400);
-  assert.equal(typeof res.body.message, 'string');
-  assert.ok(res.body.message.length > 0);
+  await assert.rejects(
+    register({ name: 'Short', surname: 'Password', email, password: 'short1' }),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.equal(typeof err.message, 'string');
+      assert.ok(err.message.length > 0);
+      return true;
+    }
+  );
 
   const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
   assert.equal(check.rows.length, 0);
@@ -238,8 +236,12 @@ test('POST /api/auth/register - password shorter than 8 characters returns 400 w
 // register form before any account exists.
 // ---------------------------------------------------------------------------
 
+// Calls the service function directly (bypassing HTTP/the register rate
+// limiter) so this file's own high volume of registration test cases doesn't
+// trip its own IP-based limit. A small, deliberate subset of tests below
+// still go through real HTTP to prove the actual Express wiring.
 async function registerWith(body) {
-  return request(app).post('/api/auth/register').send(body);
+  return register(body);
 }
 
 function baseRegisterBody(email) {
@@ -258,8 +260,7 @@ test('POST /api/auth/register - the chosen department is persisted on the users 
   t.after(() => deleteUserByEmail(email));
   const department = await activeDepartment();
 
-  const res = await registerWith({ ...baseRegisterBody(email), department_id: department.id });
-  assert.equal(res.status, 201, JSON.stringify(res.body));
+  await registerWith({ ...baseRegisterBody(email), department_id: department.id });
 
   const row = await pool.query(
     'SELECT role, department_id, google_id FROM users WHERE email = $1',
@@ -276,15 +277,18 @@ test('POST /api/auth/register - missing department_id returns 400 and creates no
   for (const departmentBody of [{}, { department_id: '' }, { department_id: null }]) {
     const email = validEmail();
     // eslint-disable-next-line no-await-in-loop
-    const res = await registerWith({ ...baseRegisterBody(email), ...departmentBody });
-
-    assert.equal(
-      res.status,
-      400,
-      `expected 400 for ${JSON.stringify(departmentBody)}: ${JSON.stringify(res.body)}`
+    await assert.rejects(
+      registerWith({ ...baseRegisterBody(email), ...departmentBody }),
+      (err) => {
+        assert.equal(
+          err.status,
+          400,
+          `expected 400 for ${JSON.stringify(departmentBody)}: ${err.message}`
+        );
+        assert.equal(err.message, 'Departman seçilmeli');
+        return true;
+      }
     );
-    assert.equal(res.body.status, 'error');
-    assert.equal(res.body.message, 'Departman seçilmeli');
     // eslint-disable-next-line no-await-in-loop
     await assertNoUser(email);
   }
@@ -294,10 +298,14 @@ test('POST /api/auth/register - missing department_id returns 400 and creates no
 test('POST /api/auth/register - nonexistent department_id returns 400 and creates no account', async () => {
   const email = validEmail();
 
-  const res = await registerWith({ ...baseRegisterBody(email), department_id: randomUUID() });
-
-  assert.equal(res.status, 400, JSON.stringify(res.body));
-  assert.equal(res.body.message, 'Geçersiz departman');
+  await assert.rejects(
+    registerWith({ ...baseRegisterBody(email), department_id: randomUUID() }),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.equal(err.message, 'Geçersiz departman');
+      return true;
+    }
+  );
   await assertNoUser(email);
 });
 
@@ -314,10 +322,14 @@ test('POST /api/auth/register - inactive department_id returns 400 and creates n
   });
 
   const email = validEmail();
-  const res = await registerWith({ ...baseRegisterBody(email), department_id: inactiveDeptId });
-
-  assert.equal(res.status, 400, JSON.stringify(res.body));
-  assert.equal(res.body.message, 'Geçersiz departman');
+  await assert.rejects(
+    registerWith({ ...baseRegisterBody(email), department_id: inactiveDeptId }),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.equal(err.message, 'Geçersiz departman');
+      return true;
+    }
+  );
   await assertNoUser(email);
 });
 
@@ -328,15 +340,19 @@ test('POST /api/auth/register - malformed non-UUID department_id returns 400, ne
   for (const malformed of ['abc', 'not-a-uuid', '123', "' OR 1=1 --"]) {
     const email = validEmail();
     // eslint-disable-next-line no-await-in-loop
-    const res = await registerWith({ ...baseRegisterBody(email), department_id: malformed });
-
-    assert.equal(
-      res.status,
-      400,
-      `expected 400 for ${JSON.stringify(malformed)}, got ${res.status}: ${JSON.stringify(res.body)}`
+    await assert.rejects(
+      registerWith({ ...baseRegisterBody(email), department_id: malformed }),
+      (err) => {
+        assert.equal(
+          err.status,
+          400,
+          `expected 400 for ${JSON.stringify(malformed)}, got ${err.status}: ${err.message}`
+        );
+        assert.notEqual(err.status, 500);
+        assert.equal(err.message, 'Geçersiz departman');
+        return true;
+      }
     );
-    assert.notEqual(res.status, 500);
-    assert.equal(res.body.message, 'Geçersiz departman');
     // eslint-disable-next-line no-await-in-loop
     await assertNoUser(email);
   }
@@ -349,7 +365,9 @@ test('POST /api/auth/register - the response never contains password_hash', asyn
   t.after(() => deleteUserByEmail(email));
   const department = await activeDepartment();
 
-  const res = await registerWith({ ...baseRegisterBody(email), department_id: department.id });
+  const res = await request(app)
+    .post('/api/auth/register')
+    .send({ ...baseRegisterBody(email), department_id: department.id });
 
   assert.equal(res.status, 201, JSON.stringify(res.body));
   assert.deepEqual(Object.keys(res.body).sort(), ['token', 'user']);
@@ -397,21 +415,27 @@ test('POST /api/auth/register - duplicate email and short password still win ove
   t.after(() => deleteUserByEmail(email));
   const department = await activeDepartment();
 
-  const first = await registerWith({ ...baseRegisterBody(email), department_id: department.id });
-  assert.equal(first.status, 201, JSON.stringify(first.body));
+  await registerWith({ ...baseRegisterBody(email), department_id: department.id });
 
   // Duplicate email, no department at all -> 409, not the department 400.
-  const duplicate = await registerWith({ ...baseRegisterBody(email) });
-  assert.equal(duplicate.status, 409, JSON.stringify(duplicate.body));
-  assert.equal(duplicate.body.message, 'Bu email zaten kayıtlı');
+  await assert.rejects(
+    registerWith({ ...baseRegisterBody(email) }),
+    (err) => {
+      assert.equal(err.status, 409);
+      assert.equal(err.message, 'Bu email zaten kayıtlı');
+      return true;
+    }
+  );
 
   // Short password, no department at all -> the password 400, not the department one.
-  const shortPassword = await registerWith({
-    ...baseRegisterBody(validEmail()),
-    password: 'short1',
-  });
-  assert.equal(shortPassword.status, 400, JSON.stringify(shortPassword.body));
-  assert.equal(shortPassword.body.message, 'Şifre en az 8 karakter olmalı');
+  await assert.rejects(
+    registerWith({ ...baseRegisterBody(validEmail()), password: 'short1' }),
+    (err) => {
+      assert.equal(err.status, 400);
+      assert.equal(err.message, 'Şifre en az 8 karakter olmalı');
+      return true;
+    }
+  );
 });
 
 // AC1 / edge case: the endpoint is public on purpose - the register form needs
@@ -503,9 +527,14 @@ test('GET /api/auth/departments + register - zero active departments is a contro
 
     // Every previously valid department id is now unusable, with the controlled
     // message rather than a constraint violation or a 500.
-    const registerRes = await registerWith({ ...baseRegisterBody(email), department_id: activeIds[0] });
-    assert.equal(registerRes.status, 400, JSON.stringify(registerRes.body));
-    assert.equal(registerRes.body.message, 'Geçersiz departman');
+    await assert.rejects(
+      registerWith({ ...baseRegisterBody(email), department_id: activeIds[0] }),
+      (err) => {
+        assert.equal(err.status, 400);
+        assert.equal(err.message, 'Geçersiz departman');
+        return true;
+      }
+    );
     await assertNoUser(email);
   } finally {
     await restore();

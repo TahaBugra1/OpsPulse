@@ -8,6 +8,7 @@ const request = require('supertest');
 // auth.google.test.js.
 const app = require('../server');
 const pool = require('../services/db');
+const { register } = require('../services/auth.service');
 const { suggestClassification } = require('../services/aiClassification.service');
 
 const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN;
@@ -24,15 +25,14 @@ async function registerEmployee() {
     'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
   );
   assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
-  const res = await request(app).post('/api/auth/register').send({
+  const result = await register({
     name: 'Test',
     surname: 'AiClassify',
     email,
     password: 'sifre1234test',
     department_id: deptRes.rows[0].id,
   });
-  assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token };
+  return { id: result.user.id, email, token: result.token };
 }
 
 async function deleteUser(userId) {
