@@ -11,11 +11,14 @@ const {
   patchComment,
   deleteCommentHandler,
   getHistory,
+  postSuggestClassification,
 } = require('../controllers/requests.controller');
+const aiRateLimiter = require('../middleware/aiRateLimiter.middleware');
 
 const router = Router();
 
 router.get('/', getRequests);
+router.post('/suggest-classification', aiRateLimiter, postSuggestClassification);
 router.get('/:id', getRequestByIdHandler);
 router.post('/', postCreateRequest);
 router.post('/:id/assign', postClaimRequest);

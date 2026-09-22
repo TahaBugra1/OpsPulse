@@ -263,4 +263,121 @@ describe('NewRequest page', () => {
     expect(String(url)).toContain('/api/requests')
     expect(options?.method).toBe('GET')
   })
+
+  describe('AI ile Öner', () => {
+    // "AI ile Öner" button disabled state: disabled while Başlık or Açıklama
+    // is empty, enabled once both have text.
+    it('disables "AI ile Öner" until both Başlık and Açıklama have text', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequestType()]))
+
+      renderNewRequest()
+      await screen.findByLabelText('Başlık')
+
+      expect(screen.getByRole('button', { name: 'AI ile Öner' })).toBeDisabled()
+
+      await user.type(screen.getByLabelText('Başlık'), 'Yazıcı bozuldu')
+      expect(screen.getByRole('button', { name: 'AI ile Öner' })).toBeDisabled()
+
+      await user.type(screen.getByLabelText('Açıklama'), 'Ofis yazıcısı çalışmıyor')
+      expect(screen.getByRole('button', { name: 'AI ile Öner' })).not.toBeDisabled()
+    })
+
+    // AC1: clicking "AI ile Öner" calls POST /api/requests/suggest-classification
+    // with the typed title/description, and a valid suggestion renders the
+    // "AI Önerisi" box.
+    it('calls suggest-classification with the typed title/description and shows the AI Önerisi box', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequestType()]))
+
+      renderNewRequest()
+
+      await user.type(await screen.findByLabelText('Başlık'), 'Yazıcı bozuldu')
+      await user.type(screen.getByLabelText('Açıklama'), 'Ofis yazıcısı çalışmıyor')
+
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: { request_type_id: 'type-1', request_type_name: 'Donanım Arızası', priority: 'HIGH' },
+        }),
+      )
+
+      await user.click(screen.getByRole('button', { name: 'AI ile Öner' }))
+
+      expect(
+        await screen.findByText('AI Önerisi — Talep Türü: Donanım Arızası, Öncelik: Yüksek'),
+      ).toBeInTheDocument()
+
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+      const [url, options] = vi.mocked(fetch).mock.calls[1]
+      expect(String(url)).toContain('/api/requests/suggest-classification')
+      expect(JSON.parse(options?.body as string)).toEqual({
+        title: 'Yazıcı bozuldu',
+        description: 'Ofis yazıcısı çalışmıyor',
+      })
+    })
+
+    // AC2: clicking "Uygula" fills the Talep Tipi and Öncelik dropdowns with
+    // the suggested values.
+    it('applies the suggestion to Talep Tipi and Öncelik dropdowns when "Uygula" is clicked', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequestType()]))
+
+      renderNewRequest()
+
+      await user.type(await screen.findByLabelText('Başlık'), 'Yazıcı bozuldu')
+      await user.type(screen.getByLabelText('Açıklama'), 'Ofis yazıcısı çalışmıyor')
+
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse(200, {
+          suggestion: { request_type_id: 'type-1', request_type_name: 'Donanım Arızası', priority: 'HIGH' },
+        }),
+      )
+      await user.click(screen.getByRole('button', { name: 'AI ile Öner' }))
+      await screen.findByText('AI Önerisi — Talep Türü: Donanım Arızası, Öncelik: Yüksek')
+
+      await user.click(screen.getByRole('button', { name: 'Uygula' }))
+
+      expect(screen.getByLabelText('Talep Tipi')).toHaveValue('type-1')
+      expect(screen.getByLabelText('Öncelik')).toHaveValue('HIGH')
+    })
+
+    // AC4/AC5: backend returns { suggestion: null } (invalid/unparseable LLM
+    // output, or an inactive/unmatched request type) -> no box, no error.
+    it('shows no AI Önerisi box and no error when the backend returns suggestion: null', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequestType()]))
+
+      renderNewRequest()
+
+      await user.type(await screen.findByLabelText('Başlık'), 'Yazıcı bozuldu')
+      await user.type(screen.getByLabelText('Açıklama'), 'Ofis yazıcısı çalışmıyor')
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, { suggestion: null }))
+      await user.click(screen.getByRole('button', { name: 'AI ile Öner' }))
+
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText(/AI Önerisi/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    // AC7 (frontend side): a non-2xx response from suggest-classification (e.g.
+    // 429 from the rate limiter) is handled by onError, which just clears the
+    // suggestion - no box, no visible error message anywhere.
+    it('shows no AI Önerisi box and no error when the backend returns a non-2xx response', async () => {
+      const user = userEvent.setup()
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, [makeRequestType()]))
+
+      renderNewRequest()
+
+      await user.type(await screen.findByLabelText('Başlık'), 'Yazıcı bozuldu')
+      await user.type(screen.getByLabelText('Açıklama'), 'Ofis yazıcısı çalışmıyor')
+
+      vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(429, {}))
+      await user.click(screen.getByRole('button', { name: 'AI ile Öner' }))
+
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText(/AI Önerisi/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
 })
