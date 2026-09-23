@@ -1,6 +1,6 @@
 async function callGemini(prompt) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY tanımlı değil');
@@ -13,7 +13,7 @@ async function callGemini(prompt) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' },
+        generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
       }),
       signal: AbortSignal.timeout(5000),
     }
