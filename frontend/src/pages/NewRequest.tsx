@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
@@ -66,6 +67,17 @@ export default function NewRequest() {
 
   return (
     <div className="flex flex-col gap-4">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={() => navigate('/requests')}
+      >
+        <ArrowLeft className="size-4" />
+        Geri
+      </Button>
+
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
