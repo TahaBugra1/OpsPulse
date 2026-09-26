@@ -10,6 +10,7 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.body.email || 'unknown',
+  message: { status: 'error', message: 'Çok fazla giriş denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin' },
 });
 
 // No custom keyGenerator: registration has no reliable pre-existing identity
@@ -20,6 +21,7 @@ const registerLimiter = rateLimit({
   limit: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { status: 'error', message: 'Çok fazla kayıt denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin' },
 });
 
 // Public on purpose: the register form needs the department list before any

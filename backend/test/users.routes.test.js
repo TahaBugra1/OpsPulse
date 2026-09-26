@@ -1640,6 +1640,10 @@ test('PATCH /api/users/me/password - the 6th request within 15 minutes returns 4
 
   const sixth = await changePassword(limited.token, body);
   assert.equal(sixth.status, 429, JSON.stringify(sixth.body));
+  assert.deepEqual(sixth.body, {
+    status: 'error',
+    message: 'Çok fazla şifre değiştirme denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin',
+  });
 
   const other = await changePassword(bystander.token, body);
   assert.notEqual(other.status, 429, "another user must not share the first user's limit");

@@ -198,6 +198,10 @@ test('POST /api/auth/login - 6th sequential login attempt for the same email ret
   }
 
   assert.equal(lastRes.status, 429);
+  assert.deepEqual(lastRes.body, {
+    status: 'error',
+    message: 'Çok fazla giriş denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin',
+  });
 });
 
 // login with a malformed email -> 400, same guard as register, never reaches the DB

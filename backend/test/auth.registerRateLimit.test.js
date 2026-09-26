@@ -22,4 +22,8 @@ test('POST /api/auth/register - 6th sequential request from the same IP returns 
   }
 
   assert.equal(lastRes.status, 429);
+  assert.deepEqual(lastRes.body, {
+    status: 'error',
+    message: 'Çok fazla kayıt denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin',
+  });
 });

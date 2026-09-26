@@ -21,6 +21,7 @@ const passwordChangeLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user.id,
+  message: { status: 'error', message: 'Çok fazla şifre değiştirme denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin' },
 });
 
 router.get('/me', getMe);

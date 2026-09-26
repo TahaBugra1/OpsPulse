@@ -6,6 +6,7 @@ const aiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user.id,
+  message: { status: 'error', message: 'Çok fazla öneri isteği gönderildi, lütfen biraz sonra tekrar deneyin' },
 });
 
 module.exports = aiRateLimiter;
