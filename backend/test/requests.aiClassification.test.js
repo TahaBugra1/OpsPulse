@@ -224,15 +224,21 @@ test('POST /api/requests/suggest-classification - no Authorization header return
   assert.equal(res.status, 401);
 });
 
-// AC8, real end-to-end: this test environment has no GEMINI_API_KEY configured,
-// so the real geminiClient.js throws synchronously, caught by
-// suggestClassification, and the route still responds 200 with suggestion: null.
+// Unset for the test's duration rather than asserting absence: a developer's
+// real key in .env must neither be printed by a failed assertion nor spend
+// real Gemini quota during the suite.
+function withoutGeminiKey(t) {
+  const saved = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  t.after(() => {
+    if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
+  });
+}
+
+// AC8, real end-to-end: with no GEMINI_API_KEY the real geminiClient.js throws,
+// suggestClassification catches it, and the route still responds 200 with suggestion: null.
 test('POST /api/requests/suggest-classification - with no GEMINI_API_KEY configured, returns 200 with suggestion: null', async (t) => {
-  assert.equal(
-    process.env.GEMINI_API_KEY,
-    undefined,
-    'GEMINI_API_KEY is unexpectedly set in this test environment - this test assumes it is absent, per atdd.md'
-  );
+  withoutGeminiKey(t);
 
   const employee = await registerEmployee();
   t.after(() => deleteUser(employee.id));
@@ -251,6 +257,7 @@ test('POST /api/requests/suggest-classification - with no GEMINI_API_KEY configu
 // window. Uses its own throwaway employee so express-rate-limit's in-memory
 // store (keyed by req.user.id) doesn't interact with the other tests above.
 test('POST /api/requests/suggest-classification - a 6th request within 60s returns 429', async (t) => {
+  withoutGeminiKey(t);
   const employee = await registerEmployee();
   t.after(() => deleteUser(employee.id));
 
