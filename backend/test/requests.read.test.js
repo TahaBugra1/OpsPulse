@@ -649,6 +649,16 @@ test('GET /api/requests - invalid date filter values are rejected', async (t) =>
   assert.equal(malformedDateToRes.status, 400);
   assert.equal(malformedDateToRes.body.message, 'Geçersiz tarih değeri');
 
+  // Well-formed but impossible calendar dates must be a clean 400, not a Postgres 500.
+  for (const impossible of ['2026-13-45', '2026-02-30']) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await request(app)
+      .get(`/api/requests?date_from=${impossible}`)
+      .set('Authorization', `Bearer ${employee.token}`);
+    assert.equal(res.status, 400, `${impossible}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, 'Geçersiz tarih değeri');
+  }
+
   const invalidRangeRes = await request(app)
     .get('/api/requests?date_from=2020-01-10&date_to=2020-01-01')
     .set('Authorization', `Bearer ${employee.token}`);

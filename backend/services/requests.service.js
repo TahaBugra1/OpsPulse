@@ -380,6 +380,13 @@ const VALID_STATUSES = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REJECTE
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+// The regex alone lets 2026-13-45 / 2026-02-30 through to Postgres, which then 500s.
+function isValidDate(value) {
+  if (!DATE_REGEX.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 async function listRequests(query, user) {
   const status = query && query.status;
   if (status !== undefined && status !== null && status !== '' && !VALID_STATUSES.includes(status)) {
@@ -399,10 +406,10 @@ async function listRequests(query, user) {
   if (priority && !SLA_HOURS[priority]) {
     fail(400, 'Geçersiz öncelik');
   }
-  if (dateFrom && !DATE_REGEX.test(dateFrom)) {
+  if (dateFrom && !isValidDate(dateFrom)) {
     fail(400, 'Geçersiz tarih değeri');
   }
-  if (dateTo && !DATE_REGEX.test(dateTo)) {
+  if (dateTo && !isValidDate(dateTo)) {
     fail(400, 'Geçersiz tarih değeri');
   }
   if (dateFrom && dateTo && dateFrom > dateTo) {
