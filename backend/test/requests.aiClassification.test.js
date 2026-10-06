@@ -123,6 +123,27 @@ test('suggestClassification - an invalid priority value returns null', async () 
   assert.equal(result, null);
 });
 
+// Surrounding whitespace from the LLM must not silently drop an otherwise valid suggestion.
+test('suggestClassification - a request type name with surrounding whitespace still matches', async () => {
+  const activeType = await pool.query(
+    'SELECT id, name FROM request_types WHERE is_active = true ORDER BY name ASC LIMIT 1'
+  );
+  assert.ok(activeType.rows[0], 'no active request type found - run `npm run seed` first');
+
+  const result = await suggestClassification(
+    { title: 'Test', description: 'Test' },
+    { id: 'irrelevant-user-id' },
+    fakeGeminiResolving(
+      JSON.stringify({ request_type_name: `  ${activeType.rows[0].name} `, priority: 'LOW' })
+    )
+  );
+  assert.deepEqual(result, {
+    request_type_id: activeType.rows[0].id,
+    request_type_name: activeType.rows[0].name,
+    priority: 'LOW',
+  });
+});
+
 // AC5: Gemini suggests a request type name that does not match any currently
 // ACTIVE request type (nonexistent name, or the name of a type that exists
 // but is inactive) -> backend rejects, returns null.

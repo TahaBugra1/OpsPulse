@@ -56,7 +56,8 @@ async function suggestClassification({ title, description }, user, callGeminiFn 
     return null;
   }
 
-  const matchedType = requestTypes.find((rt) => rt.name === parsed.request_type_name);
+  const suggestedName = parsed.request_type_name.trim();
+  const matchedType = requestTypes.find((rt) => rt.name === suggestedName);
   if (!matchedType) {
     return null;
   }
