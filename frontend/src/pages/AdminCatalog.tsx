@@ -204,46 +204,48 @@ export default function AdminCatalog() {
           {!departmentsPending && !departmentsIsError && departments && (
             <form className="flex flex-col gap-5" onSubmit={requestTypeForm.handleSubmit(onCreateRequestType)} noValidate>
               <FieldGroup>
-                <Controller
-                  control={requestTypeForm.control}
-                  name="name"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="new-request-type-name">Ad</FieldLabel>
-                      <Input
-                        {...field}
-                        id="new-request-type-name"
-                        disabled={createRequestTypeMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      />
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                <div className="grid grid-cols-2 gap-4">
+                  <Controller
+                    control={requestTypeForm.control}
+                    name="name"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="new-request-type-name">Ad</FieldLabel>
+                        <Input
+                          {...field}
+                          id="new-request-type-name"
+                          disabled={createRequestTypeMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        />
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
 
-                <Controller
-                  control={requestTypeForm.control}
-                  name="department_id"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="new-request-type-department">Departman</FieldLabel>
-                      <Select
-                        {...field}
-                        id="new-request-type-department"
-                        disabled={createRequestTypeMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      >
-                        <option value="">Seçiniz</option>
-                        {activeDepartments.map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </Select>
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                  <Controller
+                    control={requestTypeForm.control}
+                    name="department_id"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="new-request-type-department">Departman</FieldLabel>
+                        <Select
+                          {...field}
+                          id="new-request-type-department"
+                          disabled={createRequestTypeMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        >
+                          <option value="">Seçiniz</option>
+                          {activeDepartments.map((department) => (
+                            <option key={department.id} value={department.id}>
+                              {department.name}
+                            </option>
+                          ))}
+                        </Select>
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
+                </div>
               </FieldGroup>
 
               {requestTypeSubmitError && (
@@ -380,7 +382,7 @@ function DepartmentRow({ department }: { department: Department }) {
             Düzenle
           </Button>
           {department.is_active ? (
-            <Button type="button" size="sm" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
+            <Button type="button" size="sm" variant="outline" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
               Pasife Al
             </Button>
           ) : (
@@ -519,7 +521,7 @@ function RequestTypeRow({
             Düzenle
           </Button>
           {requestType.is_active ? (
-            <Button type="button" size="sm" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
+            <Button type="button" size="sm" variant="outline" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
               Pasife Al
             </Button>
           ) : (

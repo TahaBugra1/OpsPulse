@@ -6,6 +6,7 @@ const { io: ioClient } = require('socket.io-client');
 
 const app = require('../server');
 const pool = require('../services/db');
+const { register } = require('../services/auth.service');
 
 const { httpServer } = app;
 
@@ -32,15 +33,14 @@ async function registerEmployee(name = 'Test', surname = 'Employee') {
     'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
   );
   assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
-  const res = await request(app).post('/api/auth/register').send({
+  const result = await register({
     name,
     surname,
     email,
     password: 'sifre1234test',
     department_id: deptRes.rows[0].id,
   });
-  assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
+  return { id: result.user.id, email, token: result.token, department_id: result.user.department_id };
 }
 
 async function deleteRequestCascade(requestId) {

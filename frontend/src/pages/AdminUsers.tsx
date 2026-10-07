@@ -114,39 +114,41 @@ export default function AdminUsers() {
           {!departmentsPending && !departmentsError && departments && (
             <form className="flex flex-col gap-5" onSubmit={form.handleSubmit(onSubmit)} noValidate>
               <FieldGroup>
-                <Controller
-                  control={form.control}
-                  name="name"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="admin-user-name">Ad</FieldLabel>
-                      <Input
-                        {...field}
-                        id="admin-user-name"
-                        disabled={createMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      />
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                <div className="grid grid-cols-2 gap-4">
+                  <Controller
+                    control={form.control}
+                    name="name"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="admin-user-name">Ad</FieldLabel>
+                        <Input
+                          {...field}
+                          id="admin-user-name"
+                          disabled={createMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        />
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
 
-                <Controller
-                  control={form.control}
-                  name="surname"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="admin-user-surname">Soyad</FieldLabel>
-                      <Input
-                        {...field}
-                        id="admin-user-surname"
-                        disabled={createMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      />
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                  <Controller
+                    control={form.control}
+                    name="surname"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="admin-user-surname">Soyad</FieldLabel>
+                        <Input
+                          {...field}
+                          id="admin-user-surname"
+                          disabled={createMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        />
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
+                </div>
 
                 <Controller
                   control={form.control}
@@ -165,50 +167,52 @@ export default function AdminUsers() {
                   )}
                 />
 
-                <Controller
-                  control={form.control}
-                  name="role"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="admin-user-role">Rol</FieldLabel>
-                      <Select
-                        {...field}
-                        id="admin-user-role"
-                        disabled={createMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      >
-                        <option value="">Seçiniz</option>
-                        <option value="EMPLOYEE">{ROLE_LABELS.EMPLOYEE}</option>
-                        <option value="DEPARTMENT_AUTHORITY">{ROLE_LABELS.DEPARTMENT_AUTHORITY}</option>
-                      </Select>
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                <div className="grid grid-cols-2 gap-4">
+                  <Controller
+                    control={form.control}
+                    name="role"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="admin-user-role">Rol</FieldLabel>
+                        <Select
+                          {...field}
+                          id="admin-user-role"
+                          disabled={createMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        >
+                          <option value="">Seçiniz</option>
+                          <option value="EMPLOYEE">{ROLE_LABELS.EMPLOYEE}</option>
+                          <option value="DEPARTMENT_AUTHORITY">{ROLE_LABELS.DEPARTMENT_AUTHORITY}</option>
+                        </Select>
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
 
-                <Controller
-                  control={form.control}
-                  name="department_id"
-                  render={({ field, fieldState }) => (
-                    <Field data-invalid={!!fieldState.error}>
-                      <FieldLabel htmlFor="admin-user-department">Departman</FieldLabel>
-                      <Select
-                        {...field}
-                        id="admin-user-department"
-                        disabled={createMutation.isPending}
-                        aria-invalid={!!fieldState.error}
-                      >
-                        <option value="">Seçiniz</option>
-                        {departments.filter((department) => department.is_active).map((department) => (
-                          <option key={department.id} value={department.id}>
-                            {department.name}
-                          </option>
-                        ))}
-                      </Select>
-                      <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
-                    </Field>
-                  )}
-                />
+                  <Controller
+                    control={form.control}
+                    name="department_id"
+                    render={({ field, fieldState }) => (
+                      <Field data-invalid={!!fieldState.error}>
+                        <FieldLabel htmlFor="admin-user-department">Departman</FieldLabel>
+                        <Select
+                          {...field}
+                          id="admin-user-department"
+                          disabled={createMutation.isPending}
+                          aria-invalid={!!fieldState.error}
+                        >
+                          <option value="">Seçiniz</option>
+                          {departments.filter((department) => department.is_active).map((department) => (
+                            <option key={department.id} value={department.id}>
+                              {department.name}
+                            </option>
+                          ))}
+                        </Select>
+                        <FieldError errors={fieldState.error ? [fieldState.error] : undefined} />
+                      </Field>
+                    )}
+                  />
+                </div>
               </FieldGroup>
 
               {submitError && (
@@ -282,6 +286,7 @@ export default function AdminUsers() {
                           <Button
                             type="button"
                             size="sm"
+                            variant="outline"
                             onClick={() => handleDeactivate(row.id)}
                             disabled={deactivateMutation.isPending}
                           >

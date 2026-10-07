@@ -11,6 +11,7 @@ const {
   deleteComment,
   listHistory,
 } = require('../services/requests.service');
+const { suggestClassification } = require('../services/aiClassification.service');
 
 async function postCreateRequest(req, res) {
   try {
@@ -125,6 +126,16 @@ async function getHistory(req, res) {
   }
 }
 
+async function postSuggestClassification(req, res) {
+  try {
+    const { title, description } = req.body;
+    const suggestion = await suggestClassification({ title, description }, req.user);
+    res.status(200).json({ suggestion });
+  } catch (err) {
+    res.status(err.status || 500).json({ status: 'error', message: err.message || 'Öneri alınamadı, lütfen tekrar deneyin' });
+  }
+}
+
 module.exports = {
   postCreateRequest,
   postClaimRequest,
@@ -137,4 +148,5 @@ module.exports = {
   patchComment,
   deleteCommentHandler,
   getHistory,
+  postSuggestClassification,
 };

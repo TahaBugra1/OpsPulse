@@ -30,6 +30,7 @@ const apiLimiter = rateLimit({
   limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { status: 'error', message: 'Çok fazla istek gönderildi, lütfen biraz sonra tekrar deneyin' },
 });
 app.use(apiLimiter);
 

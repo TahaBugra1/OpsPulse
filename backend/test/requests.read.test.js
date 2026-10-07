@@ -5,6 +5,7 @@ const request = require('supertest');
 
 const app = require('../server');
 const pool = require('../services/db');
+const { register } = require('../services/auth.service');
 
 const ALLOWED_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN;
 
@@ -23,15 +24,14 @@ async function registerEmployee() {
     'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
   );
   assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
-  const res = await request(app).post('/api/auth/register').send({
+  const result = await register({
     name: 'Test',
     surname: 'Employee',
     email,
     password: 'sifre1234test',
     department_id: deptRes.rows[0].id,
   });
-  assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
+  return { id: result.user.id, email, token: result.token, department_id: result.user.department_id };
 }
 
 async function deleteRequestCascade(requestId) {
@@ -648,6 +648,16 @@ test('GET /api/requests - invalid date filter values are rejected', async (t) =>
     .set('Authorization', `Bearer ${employee.token}`);
   assert.equal(malformedDateToRes.status, 400);
   assert.equal(malformedDateToRes.body.message, 'Geçersiz tarih değeri');
+
+  // Well-formed but impossible calendar dates must be a clean 400, not a Postgres 500.
+  for (const impossible of ['2026-13-45', '2026-02-30']) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await request(app)
+      .get(`/api/requests?date_from=${impossible}`)
+      .set('Authorization', `Bearer ${employee.token}`);
+    assert.equal(res.status, 400, `${impossible}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.message, 'Geçersiz tarih değeri');
+  }
 
   const invalidRangeRes = await request(app)
     .get('/api/requests?date_from=2020-01-10&date_to=2020-01-01')

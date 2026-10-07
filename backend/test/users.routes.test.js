@@ -8,6 +8,7 @@ const request = require('supertest');
 
 const app = require('../server');
 const pool = require('../services/db');
+const { register } = require('../services/auth.service');
 
 // process.env.ALLOWED_EMAIL_DOMAIN is populated once ../server (which loads
 // dotenv) has been required above.
@@ -38,15 +39,14 @@ async function registerEmployee() {
     'SELECT id FROM departments WHERE is_active = true ORDER BY name ASC LIMIT 1'
   );
   assert.ok(deptRes.rows[0], 'no active department found - run `npm run seed` first');
-  const res = await request(app).post('/api/auth/register').send({
+  const result = await register({
     name: 'Test',
     surname: 'Employee',
     email,
     password: 'sifre1234test',
     department_id: deptRes.rows[0].id,
   });
-  assert.equal(res.status, 201, `employee registration failed: ${JSON.stringify(res.body)}`);
-  return { id: res.body.user.id, email, token: res.body.token, department_id: res.body.user.department_id };
+  return { id: result.user.id, email, token: result.token, department_id: result.user.department_id };
 }
 
 async function deleteUser(userId) {
@@ -1640,6 +1640,10 @@ test('PATCH /api/users/me/password - the 6th request within 15 minutes returns 4
 
   const sixth = await changePassword(limited.token, body);
   assert.equal(sixth.status, 429, JSON.stringify(sixth.body));
+  assert.deepEqual(sixth.body, {
+    status: 'error',
+    message: 'Çok fazla şifre değiştirme denemesi yapıldı, lütfen 15 dakika sonra tekrar deneyin',
+  });
 
   const other = await changePassword(bystander.token, body);
   assert.notEqual(other.status, 429, "another user must not share the first user's limit");

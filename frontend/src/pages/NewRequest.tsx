@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
+import { ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
@@ -9,7 +10,13 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { usePageTitle } from '@/context/PageTitleContext'
-import { PRIORITY_LABELS, useCreateRequest, useRequestTypes } from '@/lib/requests'
+import {
+  PRIORITY_LABELS,
+  useCreateRequest,
+  useRequestTypes,
+  useSuggestClassification,
+  type ClassificationSuggestion,
+} from '@/lib/requests'
 import { requestSchema, type RequestFormValues } from '@/lib/validation'
 
 export default function NewRequest() {
@@ -24,6 +31,26 @@ export default function NewRequest() {
     resolver: zodResolver(requestSchema),
     defaultValues: { title: '', description: '', request_type_id: '', priority: 'MEDIUM' },
   })
+
+  const suggestMutation = useSuggestClassification()
+  const [suggestion, setSuggestion] = useState<ClassificationSuggestion | null>(null)
+
+  function handleSuggest() {
+    const { title, description } = form.getValues()
+    suggestMutation.mutate(
+      { title, description },
+      {
+        onSuccess: (data) => setSuggestion(data.suggestion),
+        onError: () => setSuggestion(null),
+      }
+    )
+  }
+
+  function handleApplySuggestion() {
+    if (!suggestion) return
+    form.setValue('request_type_id', suggestion.request_type_id)
+    form.setValue('priority', suggestion.priority)
+  }
 
   function onSubmit(values: RequestFormValues) {
     setSubmitError(null)
@@ -40,6 +67,17 @@ export default function NewRequest() {
 
   return (
     <div className="flex flex-col gap-4">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="w-fit"
+        onClick={() => navigate('/requests')}
+      >
+        <ArrowLeft className="size-4" />
+        Geri
+      </Button>
+
       <Card className="w-full max-w-3xl">
         <CardContent>
           {isPending && <p className="text-muted-foreground">Yükleniyor...</p>}
@@ -140,13 +178,35 @@ export default function NewRequest() {
                 />
               </FieldGroup>
 
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleSuggest}
+                  disabled={suggestMutation.isPending || !form.watch('title') || !form.watch('description')}
+                  loading={suggestMutation.isPending}
+                >
+                  AI ile Öner
+                </Button>
+                {suggestion && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/50 p-3 text-sm">
+                    <span>
+                      AI Önerisi — Talep Türü: {suggestion.request_type_name}, Öncelik: {PRIORITY_LABELS[suggestion.priority]}
+                    </span>
+                    <Button type="button" size="sm" onClick={handleApplySuggestion}>
+                      Uygula
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               {submitError && (
                 <p role="alert" className="text-sm font-normal text-destructive">
                   {submitError}
                 </p>
               )}
 
-              <Button type="submit" disabled={mutation.isPending}>
+              <Button type="submit" disabled={mutation.isPending} loading={mutation.isPending}>
                 Oluştur
               </Button>
             </form>

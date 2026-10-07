@@ -5,7 +5,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell, getLandingPath } from '@/components/AppShell'
-import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute } from '@/components/ProtectedRoute'
+import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute, RoleRoute } from '@/components/ProtectedRoute'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
 import { SocketProvider } from '@/context/SocketContext'
 import { setUnauthorizedHandler } from '@/lib/api'
@@ -63,10 +63,16 @@ function App() {
                       <Route path="/requests/new" element={<NewRequest />} />
                       <Route path="/requests/:id" element={<RequestDetail />} />
                       <Route path="/profile" element={<Profile />} />
-                      <Route path="/queue" element={<Queue />} />
-                      <Route path="/team" element={<Team />} />
-                      <Route path="/admin/users" element={<AdminUsers />} />
-                      <Route path="/admin/catalog" element={<AdminCatalog />} />
+                      <Route element={<RoleRoute roles={['DEPARTMENT_AUTHORITY', 'ADMIN']} />}>
+                        <Route path="/queue" element={<Queue />} />
+                      </Route>
+                      <Route element={<RoleRoute roles={['DEPARTMENT_AUTHORITY']} />}>
+                        <Route path="/team" element={<Team />} />
+                      </Route>
+                      <Route element={<RoleRoute roles={['ADMIN']} />}>
+                        <Route path="/admin/users" element={<AdminUsers />} />
+                        <Route path="/admin/catalog" element={<AdminCatalog />} />
+                      </Route>
                     </Route>
                   </Route>
                   {/* Deliberately OUTSIDE ProtectedRoute: ProtectedRoute is what

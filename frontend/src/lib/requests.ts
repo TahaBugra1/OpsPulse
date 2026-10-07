@@ -226,6 +226,19 @@ export function useCreateRequest() {
   })
 }
 
+export interface ClassificationSuggestion {
+  request_type_id: string
+  request_type_name: string
+  priority: 'LOW' | 'MEDIUM' | 'HIGH'
+}
+
+export function useSuggestClassification() {
+  return useMutation({
+    mutationFn: (body: { title: string; description: string }) =>
+      apiPost<{ suggestion: ClassificationSuggestion | null }>('/api/requests/suggest-classification', body),
+  })
+}
+
 // The four mutations below all return raw DB rows (RETURNING *) without the
 // JOIN-derived display fields (*_name, is_overdue, author_name), so nothing
 // reads their response — the caller invalidates and refetches the enriched

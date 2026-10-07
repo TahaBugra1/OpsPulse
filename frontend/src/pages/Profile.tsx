@@ -164,7 +164,7 @@ export default function Profile() {
                 </p>
               )}
 
-              <Button type="submit" disabled={mutation.isPending}>
+              <Button type="submit" disabled={mutation.isPending} loading={mutation.isPending}>
                 Kaydet
               </Button>
             </form>
@@ -244,7 +244,7 @@ export default function Profile() {
                 </p>
               )}
 
-              <Button type="submit" disabled={passwordMutation.isPending}>
+              <Button type="submit" disabled={passwordMutation.isPending} loading={passwordMutation.isPending}>
                 Şifreyi Değiştir
               </Button>
             </form>
