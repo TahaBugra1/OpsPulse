@@ -31,6 +31,16 @@ export function ProtectedRoute() {
   return <Outlet />
 }
 
+// UX only: hiding a page from the nav doesn't stop typing its URL. The
+// backend still rejects every request these pages make for other roles.
+export function RoleRoute({ roles }: { roles: AuthUser['role'][] }) {
+  const { user } = useAuth()
+  if (!user || !roles.includes(user.role)) {
+    return <Navigate to="/" replace />
+  }
+  return <Outlet />
+}
+
 export function IncompleteProfileRoute() {
   const { user } = useAuth()
   if (!user) {

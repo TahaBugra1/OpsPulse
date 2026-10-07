@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AuthProvider } from '@/context/AuthContext'
 import type { AuthUser } from '@/lib/authStorage'
-import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute } from './ProtectedRoute'
+import { GuestOnlyRoute, IncompleteProfileRoute, PasswordChangeRoute, ProtectedRoute, RoleRoute } from './ProtectedRoute'
 
 // A COMPLETE user: an EMPLOYEE whose department_id is set. department_id must be
 // non-null here, because a departmentless EMPLOYEE is exactly the new
@@ -329,6 +329,60 @@ describe('PasswordChangeRoute', () => {
     expect(screen.getByText('CHANGE PASSWORD')).toBeInTheDocument()
     expect(screen.queryByText('HOME CONTENT')).not.toBeInTheDocument()
     expect(screen.queryByText('LOGIN FORM')).not.toBeInTheDocument()
+  })
+})
+
+function renderRoleRoute(roles: AuthUser['role'][]) {
+  return render(
+    <AuthProvider>
+      <MemoryRouter initialEntries={['/restricted']}>
+        <Routes>
+          <Route element={<RoleRoute roles={roles} />}>
+            <Route path="/restricted" element={<div>RESTRICTED CONTENT</div>} />
+          </Route>
+          <Route path="/" element={<div>HOME CONTENT</div>} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
+  )
+}
+
+describe('RoleRoute', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  it('renders the page for a role in the allowed list', () => {
+    seedSession('tok-123', departmentAuthority)
+
+    renderRoleRoute(['DEPARTMENT_AUTHORITY', 'ADMIN'])
+
+    expect(screen.getByText('RESTRICTED CONTENT')).toBeInTheDocument()
+  })
+
+  // An EMPLOYEE typing /queue directly must not land on the authority queue.
+  it('redirects a role outside the allowed list to /, never rendering the page', () => {
+    seedSession('tok-123', fakeUser)
+
+    renderRoleRoute(['DEPARTMENT_AUTHORITY', 'ADMIN'])
+
+    expect(screen.getByText('HOME CONTENT')).toBeInTheDocument()
+    expect(screen.queryByText('RESTRICTED CONTENT')).not.toBeInTheDocument()
+  })
+
+  it('redirects a DEPARTMENT_AUTHORITY away from an ADMIN-only page', () => {
+    seedSession('tok-123', departmentAuthority)
+
+    renderRoleRoute(['ADMIN'])
+
+    expect(screen.getByText('HOME CONTENT')).toBeInTheDocument()
+    expect(screen.queryByText('RESTRICTED CONTENT')).not.toBeInTheDocument()
   })
 })
 
